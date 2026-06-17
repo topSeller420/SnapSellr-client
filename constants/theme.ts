@@ -6,7 +6,7 @@
 import { Platform } from 'react-native';
 
 const tintColorLight = '#0a7ea4';
-const tintColorDark = '#fff';
+const tintColorDark = '#FDD620';
 
 export const Colors = {
   light: {
@@ -18,12 +18,41 @@ export const Colors = {
     tabIconSelected: tintColorLight,
   },
   dark: {
+    logoColor: '#FDD620',
     text: '#ECEDEE',
     background: '#151718',
+    border: '#3E3E3E',
     tint: tintColorDark,
     icon: '#9BA1A6',
     tabIconDefault: '#9BA1A6',
     tabIconSelected: tintColorDark,
+    sectionHeader: {
+      backgroundColor: '#0E1113',
+    },
+    tooltip: {
+      background: '#fff',
+      border: '#fff',
+      text: '#11181C',
+    },
+    switchToggle: {
+      thumb: '#fff',
+      ios_backgroundColor: '#3e3e3e',
+      trackTrue: '#1870F4',
+      trackFalse: '#767577',
+    },
+    modal: {
+      text: '#fff',
+      buttonText: '#1870F4',
+      background: '#1A1C1E',
+    },
+    cancelButton: {
+      borderColor: tintColorDark,
+      textColor: tintColorDark,
+    },
+    saveButton: {
+      backgroundColor: tintColorDark,
+      textColor: '#1A1C1E',
+    }
   },
 };
 

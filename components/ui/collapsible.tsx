@@ -1,32 +1,57 @@
 import { PropsWithChildren, useState } from 'react';
-import { StyleSheet, TouchableOpacity } from 'react-native';
+import { StyleSheet, TouchableOpacity, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { IconSymbol } from '@/components/ui/icon-symbol';
+import { IconSymbol, IconSymbolName } from '@/components/ui/icon-symbol';
 import { Colors } from '@/constants/theme';
-import { useColorScheme } from '@/hooks/use-color-scheme';
 
-export function Collapsible({ children, title }: PropsWithChildren & { title: string }) {
+export function Collapsible({ children, title, type }: PropsWithChildren & { title: string, type?: IconSymbolName }) {
   const [isOpen, setIsOpen] = useState(false);
-  const theme = useColorScheme() ?? 'light';
+  // set default color theme to dark for now
+  // const theme = useColorScheme() ?? 'light';
+  const theme = 'dark';
+
+
 
   return (
     <ThemedView>
       <TouchableOpacity
         style={styles.heading}
-        onPress={() => setIsOpen((value) => !value)}
+        onPress={() => {
+          setIsOpen((value) => !value);
+        }}
         activeOpacity={0.8}>
+
+        {
+          type != null ?
+          (
+            <View style={styles.collapsibleMenu}>
+              <IconSymbol
+                name={type}
+                size={18}
+                weight="medium"
+                color={theme === 'light' ? Colors.light.icon : Colors.dark.icon}
+                style={{ marginTop: 3.5 }}
+              />
+
+              <ThemedText type="defaultSemiBold">{title}</ThemedText>
+            </View>
+          )
+          : (
+            <ThemedText type="defaultSemiBold">{title}</ThemedText>
+          )
+        }
+
         <IconSymbol
           name="chevron.right"
           size={18}
           weight="medium"
           color={theme === 'light' ? Colors.light.icon : Colors.dark.icon}
-          style={{ transform: [{ rotate: isOpen ? '90deg' : '0deg' }] }}
+          style={{ transform: [{ rotate: isOpen ? '90deg' : '0deg' }], marginTop: 3.5 }}
         />
-
-        <ThemedText type="defaultSemiBold">{title}</ThemedText>
       </TouchableOpacity>
+
       {isOpen && <ThemedView style={styles.content}>{children}</ThemedView>}
     </ThemedView>
   );
@@ -34,12 +59,24 @@ export function Collapsible({ children, title }: PropsWithChildren & { title: st
 
 const styles = StyleSheet.create({
   heading: {
+    borderColor: Colors.dark.border,
+    borderWidth: 1,
+    borderRadius: 16,
+
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    display: 'flex',
+    justifyContent: 'space-between',
     flexDirection: 'row',
-    alignItems: 'center',
     gap: 6,
   },
   content: {
     marginTop: 6,
     marginLeft: 24,
   },
+  collapsibleMenu: {
+    display: 'flex',
+    flexDirection: 'row',
+    gap: 12
+  }
 });
