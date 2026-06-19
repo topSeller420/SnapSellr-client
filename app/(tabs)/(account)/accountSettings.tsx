@@ -43,7 +43,7 @@ export default function AccountSettings() {
 
 	function getAccountSettings() {
 		const pathVariables = {
-			id: "6228640b-e52f-4e39-8edd-65adb1615c20"
+			id: "bd28da97-116d-4955-bbc5-7128e0c8f005"
 		};
 		getSellerProfileAPI(pathVariables, (response: Seller) => {
 			console.log("response: ", response);
@@ -67,7 +67,7 @@ export default function AccountSettings() {
 
 	function updateAccountSettings(fieldChangesToValues: { [key: string]: unknown }) {
 		const pathVariables = {
-			id: "6228640b-e52f-4e39-8edd-65adb1615c20"
+			id: "bd28da97-116d-4955-bbc5-7128e0c8f005"
 		};
 		const payload = {
 			email: emailValue,

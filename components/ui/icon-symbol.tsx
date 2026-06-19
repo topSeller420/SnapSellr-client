@@ -19,6 +19,8 @@ const MAPPING = {
 
   // for tab bar icons
   'plus.circle': 'add-circle',
+  'chart.bar': 'bar-chart',
+  'message': 'message',
   'archivebox': 'inventory-2',
   'person.crop.circle': 'account-circle',
 
