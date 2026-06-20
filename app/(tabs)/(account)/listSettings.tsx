@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Modal, Pressable, StyleSheet, Switch, TextInput, View } from 'react-native';
 
 import ParallaxScrollView from '@/components/parallax-scroll-view';
@@ -10,21 +10,39 @@ import { Colors } from '@/constants/theme';
 
 import type { SellerListingSettings } from '@/apis/schemas/sellerListingSettingsSchema';
 import { getSellerListingSettingsAPI, updateSellerListingSettingsAPI } from '@/apis/sellerListingSettingsController';
+import { useAppDispatch, useAppSelector } from '@/hooks/redux';
+import { setListSettings } from '@/redux/slices/listSettingsSlice';
 
 export default function ListSettings() {
 	// set default color theme to dark for now
 	// const theme = useColorScheme() ?? 'light';
 	const theme = 'dark';
 
+	const dispatch = useAppDispatch();
+	const listSettings = useAppSelector(state => state.listSettings);
+
 	// Listing toggles
 	const [nameEnabled, setNameEnabled] = useState(false);
 	const toggleNameSwitch = () => {
-		setNameEnabled(previousState => !previousState);
+		const newVal = !nameEnabled;
+		setNameEnabled(newVal);
+
+		dispatch(setListSettings({ generateName: newVal }));
 	};
 	const [descriptionEnabled, setDescriptionEnabled] = useState(false);
-	const toggleDescriptionSwitch = () => setDescriptionEnabled(previousState => !previousState);
+	const toggleDescriptionSwitch = () => {
+		const newVal = !descriptionEnabled;
+		setDescriptionEnabled(newVal);
+
+		dispatch(setListSettings({ generateDescription: newVal }));
+	};
 	const [detailsEnabled, setDetailsEnabled] = useState(false);
-	const toggleDetailsSwitch = () => setDetailsEnabled(previousState => !previousState);
+	const toggleDetailsSwitch = () => {
+		const newVal = !detailsEnabled;
+		setDetailsEnabled(newVal);
+		
+		dispatch(setListSettings({ generateItemDetails: newVal }));
+	};
 
 	// Seller toggles
 	// Return policy
@@ -37,55 +55,53 @@ export default function ListSettings() {
 	const [sellerNameValue, setSellerNameValue] = useState('');
 	const [sellerLogoValue, setSellerLogoValue] = useState('');
 
-	useEffect(() => {
-		getListingSettings();
-	}, []);
-
-	function getListingSettings() {
+	const getListingSettings = useCallback(() => {
 		const pathVariables = {
-			id: "2622ea56-8d94-4164-8518-3d2637033103"
+			id: "6cd7f79f-3c38-412e-a38f-61280c54636d"
 		};
 		getSellerListingSettingsAPI(pathVariables, (response: SellerListingSettings) => {
-			// {
-			// 	"auto_generate_description": false,
-			// 	"auto_generate_details": false,
-			// 	"auto_generate_title": false,
-				
-			// 	"auto_include_return_policy": true,
-			// 	"auto_include_store_logo": true,
-			// 	"auto_include_store_name": true,
-				
-			// 	"created_at": "2026-03-10T23:10:42.542Z",
-			// 	"id": "bf8df769-7b99-4ab0-bc66-49fa3a05ab10",
-				
-			// 	"return_policy_text": "We offer a 30-day return policy for all items.",
-			// 	"store_logo_url": "https://example.com/logo.png",
-			// 	"store_name": "John's Store"
-			// }
 			console.log("response: ", response);
 
-			setNameEnabled(response.auto_generate_title ?? false);
-			setDescriptionEnabled(response.auto_generate_description ?? false);
-			setDetailsEnabled(response.auto_generate_details ?? false);
-
-			setReturnPolicyEnabled(response.auto_include_return_policy ?? false);
-			setSellerInfoEnabled((response.auto_include_store_name && response.auto_include_store_logo) ?? false);
-
-			setReturnPolicyValue(response.return_policy_text ?? '');
-			setSellerNameValue(response.store_name ?? '');
-			setSellerLogoValue(response.store_logo_url ?? '');
+			dispatch(setListSettings({
+				generateName: response.auto_generate_title ?? false,
+				generateDescription: response.auto_generate_description ?? false,
+				generateItemDetails: response.auto_generate_details ?? false,
+				
+				returnPolicyEnabled: response.auto_include_return_policy ?? false,
+				returnPolicy: response.return_policy_text ?? '',
+				nameAndLogo: {
+					storeName: response.store_name ?? '',
+					storeLogoUrl: response.store_logo_url ?? '',
+				},
+				sellerInfoEnabled: (response.auto_include_store_name && response.auto_include_store_logo) ?? false,
+			}));
 		});
-	}
+	}, [dispatch]);
+
+	useEffect(() => {
+		if (!listSettings.isLoaded) {
+			getListingSettings();
+		}
+	}, [listSettings.isLoaded, getListingSettings]);
+
+	useEffect(() => {
+		if (listSettings.isLoaded) {
+			setNameEnabled(listSettings.generateName);
+			setDescriptionEnabled(listSettings.generateDescription);
+			setDetailsEnabled(listSettings.generateItemDetails);
+			setReturnPolicyEnabled(listSettings.returnPolicyEnabled);
+			setReturnPolicyValue(listSettings.returnPolicy);
+			setSellerInfoEnabled(listSettings.sellerInfoEnabled);
+			setSellerNameValue(listSettings.nameAndLogo.storeName);
+			setSellerLogoValue(listSettings.nameAndLogo.storeLogoUrl);
+		}
+	}, [listSettings]);
 
 	function updateListingSettings(fieldChangesToValues: { [key: string]: any }) {
 		const pathVariables = {
-			id: "5fcd21c9-a3f2-4d73-9da3-26eb4c868886"
+			id: "6cd7f79f-3c38-412e-a38f-61280c54636d"
 		};
 		let payload = {
-			auto_generate_title: nameEnabled,
-			auto_generate_description: descriptionEnabled,
-			auto_generate_details: detailsEnabled,
-
 			auto_include_return_policy: returnPolicyEnabled,
 			auto_include_store_name: sellerInfoEnabled,
 			auto_include_store_logo: sellerInfoEnabled,
@@ -96,8 +112,19 @@ export default function ListSettings() {
 		};
 		Object.assign(payload, fieldChangesToValues);
 
-		updateSellerListingSettingsAPI(pathVariables, payload, (response: string) => {
+		updateSellerListingSettingsAPI(pathVariables, payload, (response: any) => {
 			console.log("update response: ", response);
+
+			const responsePayload = typeof response === 'object' && response !== null ? response : payload;
+			dispatch(setListSettings({
+				returnPolicyEnabled: responsePayload.auto_include_return_policy ?? payload.auto_include_return_policy,
+				returnPolicy: responsePayload.return_policy_text ?? payload.return_policy_text,
+				nameAndLogo: {
+					storeName: responsePayload.store_name ?? payload.store_name,
+					storeLogoUrl: responsePayload.store_logo_url ?? payload.store_logo_url,
+				},
+				sellerInfoEnabled: (responsePayload.auto_include_store_name && responsePayload.auto_include_store_logo) ?? (payload.auto_include_store_name && payload.auto_include_store_logo),
+			}));
 		});
 	}
 
@@ -120,9 +147,11 @@ export default function ListSettings() {
 
 	function saveReturnPolicy() {
 		setIsReturnModalVisible(false);
+		// Immediately set enabled locally and in Redux (optimistic)
 		setReturnPolicyEnabled(true);
+		dispatch(setListSettings({ returnPolicyEnabled: true, returnPolicy: returnPolicyValue }));
 		updateListingSettings({
-			auto_include_return_policy: returnPolicyEnabled,
+			auto_include_return_policy: true,
 			return_policy_text: returnPolicyValue
 		});
 	}
@@ -147,9 +176,15 @@ export default function ListSettings() {
 
 	function saveSellerInfo() {
 		setSellerInfoModalVisible(false);
+		// Immediately set enabled locally and in Redux (optimistic)
+		setSellerInfoEnabled(true);
+		dispatch(setListSettings({
+			sellerInfoEnabled: true,
+			nameAndLogo: { storeName: sellerNameValue, storeLogoUrl: sellerLogoValue }
+		}));
 		updateListingSettings({
-			auto_include_store_name: sellerInfoEnabled,
-			auto_include_store_logo: sellerInfoEnabled,
+			auto_include_store_name: true,
+			auto_include_store_logo: true,
 			store_name: sellerNameValue,
 			store_logo_url: sellerLogoValue
 		});
@@ -158,7 +193,7 @@ export default function ListSettings() {
 
 	return (
 		<ParallaxScrollView style={styles.container}>
-			<Modal 
+			<Modal
 				visible={isReturnModalVisible}
 				animationType="slide"
 				onRequestClose={closeReturnPolicy}
@@ -166,19 +201,18 @@ export default function ListSettings() {
 				>
 				<View style={styles.modal}>
 					<ThemedView style={styles.modalContainer}>
-						<ThemedText style={styles.modalHeader}>
-							Return policy
-						</ThemedText>
+						<View style={styles.dragHandle} />
+						<ThemedText style={styles.modalHeader}>Return policy</ThemedText>
 						<TextInput style={styles.textArea}
 							onChangeText={text => setReturnPolicyValue(text)}
         					value={returnPolicyValue}
-							placeholder="Your custom return policy here..."
-							placeholderTextColor={Colors.dark.modal.text}
+							placeholder="Describe your return policy..."
+							placeholderTextColor={Colors.dark.border}
 							multiline={true}
 						/>
 						<View style={styles.modalButtonsContainer}>
 							<Pressable onPress={closeReturnPolicy} style={styles.closeButtonContainer}>
-								<ThemedText style={styles.closeButton}>Close</ThemedText>
+								<ThemedText style={styles.closeButton}>Cancel</ThemedText>
 							</Pressable>
 							<Pressable onPress={saveReturnPolicy} style={styles.saveButtonContainer}>
 								<ThemedText style={styles.saveButton}>Save</ThemedText>
@@ -187,7 +221,7 @@ export default function ListSettings() {
 					</ThemedView>
 				</View>
 			</Modal>
-			<Modal 
+			<Modal
 				visible={isSellerInfoModalVisible}
 				animationType="slide"
 				onRequestClose={closeSellerInfo}
@@ -195,24 +229,23 @@ export default function ListSettings() {
 				>
 				<View style={styles.modal}>
 					<ThemedView style={styles.modalContainer}>
-						<ThemedText style={styles.modalHeader}>
-							Seller info
-						</ThemedText>
+						<View style={styles.dragHandle} />
+						<ThemedText style={styles.modalHeader}>Seller info</ThemedText>
 						<TextInput style={styles.textInput}
 							onChangeText={text => setSellerNameValue(text)}
         					value={sellerNameValue}
-							placeholder="Your store name here..."
-							placeholderTextColor={Colors.dark.modal.text}
+							placeholder="Store name"
+							placeholderTextColor={Colors.dark.border}
 						/>
 						<TextInput style={styles.textInput}
 							onChangeText={text => setSellerLogoValue(text)}
         					value={sellerLogoValue}
-							placeholder="Your store logo URL here..."
-							placeholderTextColor={Colors.dark.modal.text}
+							placeholder="Logo URL"
+							placeholderTextColor={Colors.dark.border}
 						/>
 						<View style={styles.modalButtonsContainer}>
 							<Pressable onPress={closeSellerInfo} style={styles.closeButtonContainer}>
-								<ThemedText style={styles.closeButton}>Close</ThemedText>
+								<ThemedText style={styles.closeButton}>Cancel</ThemedText>
 							</Pressable>
 							<Pressable onPress={saveSellerInfo} style={styles.saveButtonContainer}>
 								<ThemedText style={styles.saveButton}>Save</ThemedText>
@@ -223,16 +256,13 @@ export default function ListSettings() {
 			</Modal>
 
 			<Pressable>
-				<ThemedView>
+				<ThemedView style={styles.sectionCard}>
 					<View style={styles.sectionHeaderContainer}>
-						<ThemedText style={styles.settingSectionHeader}>
-							LISTING
-						</ThemedText>
-
+						<ThemedText style={styles.settingSectionHeader}>LISTING</ThemedText>
 						<Tooltip content="These are automatically applied to each new listing" position="right">
 							<IconSymbol
 								name={'info.circle'}
-								size={18}
+								size={16}
 								weight="medium"
 								color={Colors[theme].icon}
 							/>
@@ -240,9 +270,7 @@ export default function ListSettings() {
 					</View>
 
 					<View style={styles.settingSection}>
-						<ThemedText style={styles.listSettingsText}>
-							Generate item's name
-						</ThemedText>
+						<ThemedText style={styles.listSettingsText}>Generate item's name</ThemedText>
 						<Switch
 							trackColor={{false: Colors[theme].switchToggle.trackFalse, true: Colors[theme].switchToggle.trackTrue}}
 							thumbColor={Colors[theme].switchToggle.thumb}
@@ -254,9 +282,7 @@ export default function ListSettings() {
 					</View>
 
 					<View style={styles.settingSection}>
-						<ThemedText style={styles.listSettingsText}>
-							Generate item's description
-						</ThemedText>
+						<ThemedText style={styles.listSettingsText}>Generate item's description</ThemedText>
 						<Switch
 							trackColor={{false: Colors[theme].switchToggle.trackFalse, true: Colors[theme].switchToggle.trackTrue}}
 							thumbColor={Colors[theme].switchToggle.thumb}
@@ -268,13 +294,11 @@ export default function ListSettings() {
 					</View>
 
 					<View style={styles.settingSection}>
-						<ThemedText style={styles.listSettingsText}>
-							Generate item's details
-						</ThemedText>
+						<ThemedText style={styles.listSettingsText}>Generate item's details</ThemedText>
 						<Switch
 							trackColor={{false: Colors[theme].switchToggle.trackFalse, true: Colors[theme].switchToggle.trackTrue}}
 							thumbColor={Colors[theme].switchToggle.thumb}
-							style={{ height: 32,transform: [{ scaleX: 0.8 }, { scaleY: 0.8 }] }}
+							style={{ height: 32, transform: [{ scaleX: 0.8 }, { scaleY: 0.8 }] }}
 							ios_backgroundColor={Colors[theme].switchToggle.ios_backgroundColor}
 							onValueChange={toggleDetailsSwitch}
 							value={detailsEnabled}
@@ -282,16 +306,13 @@ export default function ListSettings() {
 					</View>
 				</ThemedView>
 
-				<ThemedView>
+				<ThemedView style={styles.sectionCard}>
 					<View style={styles.sectionHeaderContainer}>
-						<ThemedText style={styles.settingSectionHeader}>
-							SELLER
-						</ThemedText>
-
+						<ThemedText style={styles.settingSectionHeader}>SELLER</ThemedText>
 						<Tooltip content="These will appear at the bottom of each item's description" position="right">
 							<IconSymbol
 								name={'info.circle'}
-								size={18}
+								size={16}
 								weight="medium"
 								color={Colors[theme].icon}
 							/>
@@ -299,9 +320,7 @@ export default function ListSettings() {
 					</View>
 
 					<View style={styles.settingSection}>
-						<ThemedText style={styles.listSettingsText}>
-							Include return policy
-						</ThemedText>
+						<ThemedText style={styles.listSettingsText}>Include return policy</ThemedText>
 						<Switch
 							trackColor={{false: Colors[theme].switchToggle.trackFalse, true: Colors[theme].switchToggle.trackTrue}}
 							thumbColor={Colors[theme].switchToggle.thumb}
@@ -313,9 +332,7 @@ export default function ListSettings() {
 					</View>
 
 					<View style={styles.settingSection}>
-						<ThemedText style={styles.listSettingsText}>
-							Include name and logo
-						</ThemedText>
+						<ThemedText style={styles.listSettingsText}>Include name and logo</ThemedText>
 						<Switch
 							trackColor={{false: Colors[theme].switchToggle.trackFalse, true: Colors[theme].switchToggle.trackTrue}}
 							thumbColor={Colors[theme].switchToggle.thumb}
@@ -333,112 +350,121 @@ export default function ListSettings() {
 
 const styles = StyleSheet.create({
 	container: {
-		padding: 0
+		padding: 0,
+	},
+	sectionCard: {
+		borderRadius: 16,
+		overflow: 'hidden',
+		borderWidth: 1,
+		borderColor: Colors.dark.border,
+		marginBottom: 16,
 	},
 	sectionHeaderContainer: {
 		backgroundColor: Colors.dark.sectionHeader.backgroundColor,
-		display: 'flex',
 		flexDirection: 'row',
 		alignItems: 'center',
+		paddingHorizontal: 16,
+		paddingVertical: 10,
+		gap: 8,
 	},
 	settingSectionHeader: {
-		fontSize: 12,
-		fontWeight: 600,
-		padding: 12,
+		fontSize: 11,
+		fontWeight: '600',
+		letterSpacing: 0.8,
+		color: Colors.dark.icon,
 	},
 	settingSection: {
-		display: 'flex',
 		flexDirection: 'row',
 		alignItems: 'center',
 		justifyContent: 'space-between',
-		paddingHorizontal: 12,
-		paddingVertical: 4,
+		paddingHorizontal: 16,
+		paddingVertical: 12,
+		borderTopWidth: 1,
+		borderTopColor: Colors.dark.border,
 	},
 	listSettingsText: {
-		fontSize: 13,
-		fontWeight: 'bold',
+		fontSize: 15,
+		fontWeight: '500',
 	},
 
 	// Modal styles
 	modal: {
-		backgroundColor: 'rgba(0, 0, 0, 0.75)', 
-		color: Colors.dark.modal.text,
+		backgroundColor: 'rgba(0, 0, 0, 0.8)',
 		height: '100%',
 		width: '100%',
 	},
 	modalContainer: {
-		alignItems: 'center',
-		display: 'flex',
 		flexDirection: 'column',
-
-		borderTopLeftRadius: 16,
-		borderTopRightRadius: 16,
+		borderTopLeftRadius: 24,
+		borderTopRightRadius: 24,
 		backgroundColor: Colors.dark.modal.background,
-		padding: 32,
+		paddingTop: 12,
+		paddingHorizontal: 24,
+		paddingBottom: 40,
 		position: 'absolute',
 		bottom: 0,
-		height: '40%',
 		width: '100%',
 	},
+	dragHandle: {
+		width: 36,
+		height: 4,
+		borderRadius: 2,
+		backgroundColor: Colors.dark.border,
+		alignSelf: 'center',
+		marginBottom: 24,
+	},
 	modalHeader: {
-		fontSize: 24,
-		fontWeight: 'bold',
-		marginTop: 20,
-		marginBottom: 36,
+		fontSize: 18,
+		fontWeight: '600',
+		marginBottom: 20,
 	},
 	textArea: {
-		color: Colors.dark.modal.text,
-		borderWidth: 1,
-		borderColor: Colors.dark.modal.text,
-		borderRadius: 10,
+		color: Colors.dark.text,
+		backgroundColor: '#242628',
+		borderRadius: 12,
 		paddingVertical: 14,
-		paddingHorizontal: 10,
-		// for Android only
+		paddingHorizontal: 16,
 		textAlignVertical: 'top',
-		height: 100,
-		width: '100%'
+		height: 110,
+		width: '100%',
+		fontSize: 15,
 	},
 	textInput: {
-		color: Colors.dark.modal.text,
-		borderWidth: 1,
-		borderColor: Colors.dark.modal.text,
-		borderRadius: 10,
+		color: Colors.dark.text,
+		backgroundColor: '#242628',
+		borderRadius: 12,
 		paddingVertical: 14,
-		paddingHorizontal: 10,
-		marginBottom: 12,
-		width: '100%'
+		paddingHorizontal: 16,
+		marginBottom: 10,
+		width: '100%',
+		fontSize: 15,
 	},
 	modalButtonsContainer: {
-		fontWeight: 'bold',
-		display: 'flex',
 		flexDirection: 'row',
-		flexWrap: 'nowrap',
-		gap: 20,
-		justifyContent: 'space-between',
-		marginTop: 32,
-		width: '100%'
+		gap: 12,
+		marginTop: 24,
+		width: '100%',
 	},
 	closeButtonContainer: {
-		borderWidth: 1,
-		borderColor: Colors.dark.cancelButton.borderColor,
-		borderRadius: 10,
-		paddingVertical: 4,
-		flexGrow: 1
+		backgroundColor: '#242628',
+		borderRadius: 12,
+		paddingVertical: 14,
+		flexGrow: 1,
 	},
 	closeButton: {
 		textAlign: 'center',
-		fontWeight: 'bold',
-		color: Colors.dark.cancelButton.textColor,
+		fontWeight: '500',
+		color: Colors.dark.text,
 	},
 	saveButtonContainer: {
-		borderRadius: 10,
+		borderRadius: 12,
 		backgroundColor: Colors.dark.saveButton.backgroundColor,
-		paddingVertical: 4,
-		flexGrow: 1
+		paddingVertical: 14,
+		flexGrow: 1,
 	},
 	saveButton: {
 		textAlign: 'center',
-		fontWeight: 'bold',
+		fontWeight: '700',
 		color: Colors.dark.saveButton.textColor,
-	}
+	},
 });
