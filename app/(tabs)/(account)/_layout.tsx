@@ -27,7 +27,7 @@ export default function AccountLayout() {
 			}} />
 
 			<Stack.Screen name="accountSettings" options={{
-				headerShown: true, title: "Account Settings", headerStyle: {backgroundColor: Colors[colorScheme].background}
+				headerShown: false,
 			}} />
 
 		</Stack>

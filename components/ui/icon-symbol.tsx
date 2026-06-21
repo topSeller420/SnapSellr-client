@@ -26,6 +26,7 @@ const MAPPING = {
 
   // for collapsibles
   'chevron.left.forwardslash.chevron.right': 'code',
+  'chevron.left': 'chevron-left',
   'chevron.right': 'chevron-right',
 
   // for collapsibles with extra icons

@@ -10,6 +10,14 @@
     "icon": "./assets/images/SnapSellr_icon.png",
     "scheme": "snapsellr",
     "userInterfaceStyle": "automatic",
+    "extra": {
+      "API_URL": "http://localhost",
+      "API_PORT": "3001",
+      "router": {},
+      "eas": {
+        "projectId": "7728ba8d-8e98-4368-9d2f-66a317f8a711"
+      }
+    },
     "newArchEnabled": true,
     // Update this to use an actual splash animation
     // "splash": {
@@ -43,7 +51,11 @@
       // Update this later once we have associated domains
       // "associatedDomains":[],
       "usesBroadcastPushNotifications": false,
-      "newArchEnabled": true
+      "newArchEnabled": true,
+      "infoPlist": {
+        "NSCameraUsageDescription": "SnapSellr uses your camera to scan items for inventory management and point of sale."
+      },
+      "bundleIdentifier": "com.anonymous.snapsellr"
     },
     "android": {
       // Design adaptive icons in the future and replace these assets
@@ -65,7 +77,11 @@
       // Full reference here: https://developer.android.com/guide/topics/permissions/overview
       // "permissions": [],
       // "blockedPermissions": [],
-      "newArchEnabled": true
+      "permissions": [
+        "android.permission.CAMERA"
+      ],
+      "newArchEnabled": true,
+      "package": "com.anonymous.snapsellr"
     },
     "web": {
       "output": "static",
@@ -74,9 +90,6 @@
     },
     "plugins": [
       "expo-router",
-      ["expo-camera", {
-        "cameraPermission": "SnapSellr uses your camera to scan items for inventory management and point of sale."
-      }],
       [
         "expo-splash-screen",
         {

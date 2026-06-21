@@ -6,24 +6,14 @@ import 'dotenv/config';
 //
 // See https://docs.expo.dev/workflow/configuration/#dynamic-configuration
 
-export default ({ config }) => {
-  // choose an .env file based on NODE_ENV if you want, or just load whatever
-  // dotenv-cli placed in process.env when running the start script
-  return {
-    ...config,
-    expo: {
-      ...config.expo,
-      extra: {
-        API_URL: process.env.API_URL || '',
-        API_PORT: process.env.API_PORT || '',
-        // add any other variables you need here
-      },
-      "plugins": [
-        "expo-font",
-        "expo-image",
-        "expo-router",
-        "expo-web-browser"
-      ]
-    },
-  };
-};
+export default ({ config }) => ({
+  // config IS the expo config object (unwrapped) — spread it directly so
+  // android, ios, plugins, etc. are preserved for prebuild.
+  ...config,
+  extra: {
+    // Preserve static extra fields from app.json (e.g. eas.projectId)
+    ...config.extra,
+    API_URL: process.env.API_URL || '',
+    API_PORT: process.env.API_PORT || '',
+  },
+});

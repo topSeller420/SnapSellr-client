@@ -15,7 +15,7 @@ function Section({ title, children }: { title: string; children: string }) {
 
 export default function TermsAndConditions() {
 	return (
-		<ParallaxScrollView>
+		<ParallaxScrollView style={styles.overrideParallaxScrollView}>
 			<ThemedText style={styles.title}>Terms and Conditions</ThemedText>
 			<ThemedText style={styles.lastUpdated}>Last updated: June 2026</ThemedText>
 
@@ -55,6 +55,15 @@ export default function TermsAndConditions() {
 }
 
 const styles = StyleSheet.create({
+	overrideParallaxScrollView: {
+		flex: 1,
+		paddingTop: 20,
+		paddingRight: 32,
+		paddingBottom: 32,
+		paddingLeft: 32,
+		gap: 16,
+		overflow: 'hidden'
+	},
 	title: {
 		fontSize: 24,
 		fontWeight: '700',

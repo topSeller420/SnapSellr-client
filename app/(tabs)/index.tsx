@@ -1,61 +1,107 @@
-import { CameraView, useCameraPermissions } from 'expo-camera';
+/**
+ * Scan screen — camera implementation is chosen at bundle time:
+ *   __DEV__  → expo-camera   (simulators, Expo Go, fast iteration)
+ *   production → react-native-vision-camera  (real devices, hardware focus, higher quality)
+ *
+ * Both share the same UI shell (framing guide, focus ring, mode toggle, flash).
+ */
+
 import { useRef, useState } from 'react';
-import { Pressable, StyleSheet, View } from 'react-native';
+import { Image, Pressable, StyleSheet, View } from 'react-native';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import Animated, {
+	runOnJS,
+	useAnimatedStyle,
+	useSharedValue,
+	withDelay,
+	withTiming,
+} from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { Colors } from '@/constants/theme';
 
+// ── Shared constants ──────────────────────────────────────────────────────────
 type ScanMode = 'inventory' | 'pos';
-type FlashMode = 'on' | 'off';
+type FlashState = 'on' | 'off';
 
-export default function ScanScreen() {
-	const [permission, requestPermission] = useCameraPermissions();
-	const [mode, setMode] = useState<ScanMode>('inventory');
-	const [flash, setFlash] = useState<FlashMode>('off');
-	const cameraRef = useRef<CameraView>(null);
+const GUIDE_SIZE = 260;
+const BRACKET_LEN = 28;
+const BRACKET_THICK = 3;
+const FOCUS_BOX = 76;
 
-	async function takePicture() {
-		if (!cameraRef.current) return;
-		const photo = await cameraRef.current.takePictureAsync();
-		console.log(`[${mode.toUpperCase()}] photo captured:`, photo?.uri);
-		// TODO: pass photo.uri into image recognition for inventory / POS flow
-	}
+// ── Shared permission-denied screen ──────────────────────────────────────────
+function PermissionScreen({ onRequest }: { onRequest: () => void }) {
+	return (
+		<SafeAreaView style={styles.permissionContainer}>
+			<View style={styles.permissionIconContainer}>
+				<IconSymbol name="camera" size={52} color={Colors.dark.icon} />
+			</View>
+			<ThemedText style={styles.permissionTitle}>Camera access needed</ThemedText>
+			<ThemedText style={styles.permissionBody}>
+				SnapSellr uses your camera to scan items for inventory management and point of sale.
+			</ThemedText>
+			<Pressable style={styles.grantButton} onPress={onRequest}>
+				<ThemedText style={styles.grantButtonText}>Grant Camera Access</ThemedText>
+			</Pressable>
+		</SafeAreaView>
+	);
+}
 
-	// Permission API still initialising
-	if (!permission) {
-		return <View style={styles.container} />;
-	}
+// ── Shared camera shell (all overlay UI) ─────────────────────────────────────
+interface CameraShellProps {
+	/** The raw camera viewfinder node — rendered below all overlays. */
+	cameraNode: React.ReactNode;
+	/** Tap gesture used to trigger the focus ring animation. */
+	tapGesture: ReturnType<typeof Gesture.Tap>;
+	/** Reanimated style for the focus ring. */
+	focusRingStyle: ReturnType<typeof useAnimatedStyle>;
+	mode: ScanMode;
+	setMode: (m: ScanMode) => void;
+	flash: FlashState;
+	setFlash: (updater: (f: FlashState) => FlashState) => void;
+	onCapture: () => void;
+}
 
-	// Camera access not yet granted — show request screen
-	if (!permission.granted) {
-		return (
-			<SafeAreaView style={styles.permissionContainer}>
-				<View style={styles.permissionIconContainer}>
-					<IconSymbol name="camera" size={52} color={Colors.dark.icon} />
-				</View>
-
-				<ThemedText style={styles.permissionTitle}>Camera access needed</ThemedText>
-				<ThemedText style={styles.permissionBody}>
-					SnapSellr uses your camera to scan items for inventory management and point of sale.
-				</ThemedText>
-
-				<Pressable style={styles.grantButton} onPress={requestPermission}>
-					<ThemedText style={styles.grantButtonText}>Grant Camera Access</ThemedText>
-				</Pressable>
-			</SafeAreaView>
-		);
-	}
-
+function CameraShell({
+	cameraNode,
+	tapGesture,
+	focusRingStyle,
+	mode,
+	setMode,
+	flash,
+	setFlash,
+	onCapture,
+}: CameraShellProps) {
 	return (
 		<View style={styles.container}>
-			<CameraView ref={cameraRef} style={StyleSheet.absoluteFill} flash={flash} />
+			{/* Camera + gesture detector */}
+			<GestureDetector gesture={tapGesture}>
+				<View style={StyleSheet.absoluteFill}>
+					{cameraNode}
+					<Animated.View pointerEvents="none" style={[styles.focusRing, focusRingStyle]} />
+				</View>
+			</GestureDetector>
 
+			{/* Centered framing guide */}
+			<View style={styles.framingContainer} pointerEvents="none">
+				<View style={styles.framingSquare}>
+					<View style={[styles.bracketH, { top: 0, left: 0 }]} />
+					<View style={[styles.bracketV, { top: 0, left: 0 }]} />
+					<View style={[styles.bracketH, { top: 0, right: 0 }]} />
+					<View style={[styles.bracketV, { top: 0, right: 0 }]} />
+					<View style={[styles.bracketH, { bottom: 0, left: 0 }]} />
+					<View style={[styles.bracketV, { bottom: 0, left: 0 }]} />
+					<View style={[styles.bracketH, { bottom: 0, right: 0 }]} />
+					<View style={[styles.bracketV, { bottom: 0, right: 0 }]} />
+				</View>
+			</View>
+
+			{/* Top: mode toggle + flash */}
 			<SafeAreaView edges={['top']} style={styles.topOverlay}>
 				<View style={styles.topRow}>
 					<View style={styles.topRowSide} />
-
 					<View style={styles.modeToggle}>
 						<Pressable
 							style={[styles.modeButton, mode === 'inventory' && styles.modeButtonActive]}
@@ -65,7 +111,6 @@ export default function ScanScreen() {
 								Inventory
 							</ThemedText>
 						</Pressable>
-						
 						<Pressable
 							style={[styles.modeButton, mode === 'pos' && styles.modeButtonActive]}
 							onPress={() => setMode('pos')}
@@ -75,7 +120,6 @@ export default function ScanScreen() {
 							</ThemedText>
 						</Pressable>
 					</View>
-
 					<Pressable
 						style={styles.flashButton}
 						onPress={() => setFlash(f => (f === 'on' ? 'off' : 'on'))}
@@ -89,9 +133,10 @@ export default function ScanScreen() {
 				</View>
 			</SafeAreaView>
 
+			{/* Bottom: capture button */}
 			<SafeAreaView edges={['bottom']} style={styles.bottomOverlay}>
 				<View style={styles.bottomRow}>
-					<Pressable style={styles.captureButton} onPress={takePicture}>
+					<Pressable style={styles.captureButton} onPress={onCapture}>
 						<View style={styles.captureInner} />
 					</Pressable>
 				</View>
@@ -100,13 +145,369 @@ export default function ScanScreen() {
 	);
 }
 
+// ── Photo preview helpers ─────────────────────────────────────────────────────
+
+/**
+ * Normalises a captured photo path to a URI that React Native's <Image>
+ * accepts on both platforms.
+ *
+ * expo-camera  → already returns a complete file:// URI on both platforms.
+ * vision-camera v4 → returns a raw absolute path (/var/…, /data/…).
+ *   iOS: Image accepts raw paths, but file:// is still the safe choice.
+ *   Android: Image REQUIRES the file:// scheme, otherwise it silently fails.
+ */
+function toImageUri(path: string): string {
+	if (path.startsWith('file://') || path.startsWith('http')) {
+		return path;
+	}
+	// path is an absolute OS path (starts with '/') → prepend file://
+	// file:// + /absolute/path = file:///absolute/path  ✓
+	return `file://${path}`;
+}
+
+interface PhotoPreviewProps {
+	uri: string;
+	mode: ScanMode;
+	onRetake: () => void;
+	onConfirm: () => void;
+}
+
+/**
+ * Full-screen preview shown after capture so the user can verify the shot
+ * before it's passed to image recognition. Retake dismisses back to the
+ * camera; Use Photo forwards the URI downstream.
+ */
+function PhotoPreview({ uri, mode, onRetake, onConfirm }: PhotoPreviewProps) {
+	return (
+		<View style={previewStyles.container}>
+			{/* Top bar: mode badge */}
+			<SafeAreaView edges={['top']} style={previewStyles.topBar}>
+				<View style={previewStyles.modeBadge}>
+					<ThemedText style={previewStyles.modeBadgeText}>
+						{mode === 'inventory' ? 'Inventory' : 'POS'}
+					</ThemedText>
+				</View>
+			</SafeAreaView>
+
+			{/* Photo — fills space between bars.
+			    resizeMode="contain" preserves the sensor's true aspect ratio
+			    so no pixels are cropped or stretched to fit the screen. */}
+			<Image
+				source={{ uri }}
+				style={previewStyles.image}
+				resizeMode="contain"
+			/>
+
+			{/* Bottom bar: action buttons */}
+			<SafeAreaView edges={['bottom']} style={previewStyles.bottomBar}>
+				<View style={previewStyles.actions}>
+					<Pressable style={previewStyles.retakeButton} onPress={onRetake}>
+						<ThemedText style={previewStyles.retakeText}>Retake</ThemedText>
+					</Pressable>
+					<Pressable style={previewStyles.confirmButton} onPress={onConfirm}>
+						<ThemedText style={previewStyles.confirmText}>Use Photo</ThemedText>
+					</Pressable>
+				</View>
+			</SafeAreaView>
+		</View>
+	);
+}
+
+// ── Dev implementation: expo-camera ──────────────────────────────────────────
+// Works on iOS Simulator, Android Emulator, and Expo Go.
+// Focus ring is visual-only (expo-camera has no imperative focus API).
+function DevScanScreen() {
+	const { CameraView, useCameraPermissions } = require('expo-camera');
+
+	const [permission, requestPermission] = useCameraPermissions();
+	const [mode, setMode] = useState<ScanMode>('inventory');
+	const [flash, setFlash] = useState<FlashState>('off');
+	const [capturedUri, setCapturedUri] = useState<string | null>(null);
+	const cameraRef = useRef<InstanceType<typeof CameraView>>(null);
+
+	const focusX = useSharedValue(0);
+	const focusY = useSharedValue(0);
+	const focusOpacity = useSharedValue(0);
+	const focusScale = useSharedValue(1);
+
+	const focusRingStyle = useAnimatedStyle(() => ({
+		opacity: focusOpacity.value,
+		transform: [
+			{ translateX: focusX.value - FOCUS_BOX / 2 },
+			{ translateY: focusY.value - FOCUS_BOX / 2 },
+			{ scale: focusScale.value },
+		],
+	}));
+
+	const tapGesture = Gesture.Tap().onEnd((event) => {
+		focusX.value = event.x;
+		focusY.value = event.y;
+		focusOpacity.value = 1;
+		focusScale.value = 1.5;
+		focusScale.value = withTiming(1, { duration: 200 });
+		focusOpacity.value = withDelay(400, withTiming(0, { duration: 400 }));
+	});
+
+	async function onCapture() {
+		try {
+			const photo = await cameraRef.current?.takePictureAsync();
+			if (photo?.uri) {
+				// expo-camera already returns a full file:// URI on both platforms
+				setCapturedUri(toImageUri(photo.uri));
+			}
+		} catch (e) {
+			console.warn('Capture failed:', e);
+		}
+	}
+
+	if (!permission) return <View style={styles.container} />;
+	if (!permission.granted) return <PermissionScreen onRequest={requestPermission} />;
+
+	if (capturedUri) {
+		return (
+			<PhotoPreview
+				uri={capturedUri}
+				mode={mode}
+				onRetake={() => setCapturedUri(null)}
+				onConfirm={() => {
+					console.log(`[DEV][${mode.toUpperCase()}] confirmed:`, capturedUri);
+					setCapturedUri(null);
+					// TODO: pass capturedUri into image recognition for inventory / POS flow
+				}}
+			/>
+		);
+	}
+
+	return (
+		<CameraShell
+			cameraNode={
+				<CameraView ref={cameraRef} style={StyleSheet.absoluteFill} flash={flash} />
+			}
+			tapGesture={tapGesture}
+			focusRingStyle={focusRingStyle}
+			mode={mode}
+			setMode={setMode}
+			flash={flash}
+			setFlash={setFlash}
+			onCapture={onCapture}
+		/>
+	);
+}
+
+// ── Production implementation: react-native-vision-camera v4 ─────────────────
+// Requires a native build (EAS Build or expo run:*).
+//
+// Quality improvements applied:
+//   1. useCameraFormat — explicitly selects the device's highest photo resolution
+//      instead of letting the library pick a default streaming profile.
+//   2. takePhoto qualityPrioritization:'quality' — enables the phone's native
+//      hardware sharpening, stabilization, and multi-frame processing.
+//   3. videoStabilizationMode:"auto" — activates optical or digital hardware
+//      stabilization on devices that support it.
+//   4. When rendering the captured photo.path in an <Image>, always set
+//      resizeMode="contain" (or "cover") with an explicit aspect ratio so Android
+//      doesn't silently compress or stretch the pixel data.
+function ProdScanScreen() {
+	const {
+		Camera,
+		useCameraDevice,
+		useCameraFormat,
+		useCameraPermission,
+	} = require('react-native-vision-camera');
+	const { useIsFocused } = require('@react-navigation/native');
+
+	const { hasPermission, requestPermission } = useCameraPermission();
+	const device = useCameraDevice('back');
+	const isFocused = useIsFocused();
+
+	// (1) Pick the format with the absolute highest photo dimensions the
+	//     hardware supports rather than a default streaming profile.
+	const format = useCameraFormat(device, [
+		{ photoResolution: 'max' },
+		{ videoResolution: 'max' }
+	]);
+
+	const [mode, setMode] = useState<ScanMode>('inventory');
+	const [flash, setFlash] = useState<FlashState>('off');
+	const [capturedUri, setCapturedUri] = useState<string | null>(null);
+	const cameraRef = useRef<InstanceType<typeof Camera>>(null);
+
+	const focusX = useSharedValue(0);
+	const focusY = useSharedValue(0);
+	const focusOpacity = useSharedValue(0);
+	const focusScale = useSharedValue(1);
+
+	const focusRingStyle = useAnimatedStyle(() => ({
+		opacity: focusOpacity.value,
+		transform: [
+			{ translateX: focusX.value - FOCUS_BOX / 2 },
+			{ translateY: focusY.value - FOCUS_BOX / 2 },
+			{ scale: focusScale.value },
+		],
+	}));
+
+	// Routes tap coordinates to the hardware lens (v4 API: camera.focus()).
+	// Must run on the JS thread because the camera ref is not worklet-accessible.
+	function triggerHardwareFocus(x: number, y: number) {
+		cameraRef.current?.focus({ x, y }).catch(() => {});
+	}
+
+	const tapGesture = Gesture.Tap().onEnd((event) => {
+		focusX.value = event.x;
+		focusY.value = event.y;
+		focusOpacity.value = 1;
+		focusScale.value = 1.5;
+		focusScale.value = withTiming(1, { duration: 200 });
+		focusOpacity.value = withDelay(400, withTiming(0, { duration: 400 }));
+		runOnJS(triggerHardwareFocus)(event.x, event.y);
+	});
+
+	async function onCapture() {
+		try {
+			// (2) qualityPrioritization:'quality' — hardware sharpening + multi-frame processing
+			const photo = await cameraRef.current?.takePhoto({
+				qualityPrioritization: 'quality',
+				flash: flash === 'on' ? 'on' : 'off',
+				enableShutterSound: true,
+			});
+			if (photo?.path) {
+				// vision-camera v4 returns a raw OS path without file:// scheme.
+				// toImageUri adds the prefix so Android's Image component can load it.
+				setCapturedUri(toImageUri(photo.path));
+			}
+		} catch (e) {
+			console.warn('Capture failed:', e);
+		}
+	}
+
+	if (!hasPermission) return <PermissionScreen onRequest={requestPermission} />;
+	if (!device) {
+		return (
+			<SafeAreaView style={styles.permissionContainer}>
+				<ThemedText style={styles.permissionTitle}>No camera found</ThemedText>
+				<ThemedText style={styles.permissionBody}>
+					This device doesn't appear to have a usable back camera.
+				</ThemedText>
+			</SafeAreaView>
+		);
+	}
+
+	if (capturedUri) {
+		return (
+			<PhotoPreview
+				uri={capturedUri}
+				mode={mode}
+				onRetake={() => setCapturedUri(null)}
+				onConfirm={() => {
+					console.log(`[PROD][${mode.toUpperCase()}] confirmed:`, capturedUri);
+					setCapturedUri(null);
+					// TODO: pass capturedUri into image recognition for inventory / POS flow
+				}}
+			/>
+		);
+	}
+
+	return (
+		<CameraShell
+			cameraNode={
+				// (3) videoStabilizationMode:"auto" — OIS or digital stabilization
+				// isActive is also false while previewing so the sensor powers down
+				<Camera
+					ref={cameraRef}
+					device={device}
+					format={format}
+					isActive={isFocused && !capturedUri}
+					photo={true}
+					videoStabilizationMode="auto"
+					style={StyleSheet.absoluteFill}
+				/>
+			}
+			tapGesture={tapGesture}
+			focusRingStyle={focusRingStyle}
+			mode={mode}
+			setMode={setMode}
+			flash={flash}
+			setFlash={setFlash}
+			onCapture={onCapture}
+		/>
+	);
+}
+
+// ── Entry point ───────────────────────────────────────────────────────────────
+// Metro bundles only the branch that matches __DEV__ at build time, so each
+// build only includes the camera library it actually needs.
+export default function ScanScreen() {
+	return __DEV__ ? <DevScanScreen /> : <ProdScanScreen />;
+}
+
+// ── Photo preview styles ──────────────────────────────────────────────────────
+const previewStyles = StyleSheet.create({
+	container: {
+		flex: 1,
+		backgroundColor: '#000',
+	},
+	topBar: {
+		alignItems: 'center',
+		paddingTop: 12,
+		paddingBottom: 8,
+	},
+	modeBadge: {
+		backgroundColor: 'rgba(0, 0, 0, 0.55)',
+		borderRadius: 20,
+		paddingVertical: 6,
+		paddingHorizontal: 18,
+	},
+	modeBadgeText: {
+		fontSize: 13,
+		fontWeight: '600',
+		color: Colors.dark.text,
+	},
+	// flex: 1 fills all space between topBar and bottomBar.
+	// resizeMode="contain" (set inline) letterboxes the image so the sensor's
+	// true aspect ratio is preserved — no pixel cropping or stretching.
+	image: {
+		flex: 1,
+		width: '100%',
+	},
+	bottomBar: {
+		paddingTop: 16,
+	},
+	actions: {
+		flexDirection: 'row',
+		gap: 12,
+		paddingHorizontal: 24,
+		paddingBottom: 24,
+	},
+	retakeButton: {
+		flex: 1,
+		backgroundColor: '#242628',
+		borderRadius: 12,
+		paddingVertical: 14,
+		alignItems: 'center',
+	},
+	retakeText: {
+		fontWeight: '500',
+		color: Colors.dark.text,
+	},
+	confirmButton: {
+		flex: 1,
+		backgroundColor: Colors.dark.saveButton.backgroundColor,
+		borderRadius: 12,
+		paddingVertical: 14,
+		alignItems: 'center',
+	},
+	confirmText: {
+		fontWeight: '700',
+		color: Colors.dark.saveButton.textColor,
+	},
+});
+
+// ── Styles ────────────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
 	container: {
 		flex: 1,
 		backgroundColor: '#000',
 	},
-
-	// ── Permission screen ────────────────────────────────────────────────────
 	permissionContainer: {
 		flex: 1,
 		backgroundColor: Colors.dark.background,
@@ -146,8 +547,38 @@ const styles = StyleSheet.create({
 		fontWeight: '700',
 		color: Colors.dark.saveButton.textColor,
 	},
-
-	// ── Top overlay ─────────────────────────────────────────────────────────
+	focusRing: {
+		position: 'absolute',
+		top: 0,
+		left: 0,
+		width: FOCUS_BOX,
+		height: FOCUS_BOX,
+		borderWidth: 2,
+		borderColor: Colors.dark.tint,
+		borderRadius: 4,
+		backgroundColor: 'transparent',
+	},
+	framingContainer: {
+		...StyleSheet.absoluteFillObject,
+		alignItems: 'center',
+		justifyContent: 'center',
+	},
+	framingSquare: {
+		width: GUIDE_SIZE,
+		height: GUIDE_SIZE,
+	},
+	bracketH: {
+		position: 'absolute',
+		width: BRACKET_LEN,
+		height: BRACKET_THICK,
+		backgroundColor: 'rgba(255, 255, 255, 0.85)',
+	},
+	bracketV: {
+		position: 'absolute',
+		width: BRACKET_THICK,
+		height: BRACKET_LEN,
+		backgroundColor: 'rgba(255, 255, 255, 0.85)',
+	},
 	topOverlay: {
 		position: 'absolute',
 		top: 0,
@@ -169,6 +600,8 @@ const styles = StyleSheet.create({
 		justifyContent: 'center',
 		backgroundColor: 'rgba(0, 0, 0, 0.5)',
 		borderRadius: 24,
+		borderWidth: 1,
+		borderColor: 'rgba(255, 255, 255, 0.22)',
 		padding: 3,
 		marginHorizontal: 8,
 	},
@@ -197,8 +630,6 @@ const styles = StyleSheet.create({
 		alignItems: 'center',
 		justifyContent: 'center',
 	},
-
-	// ── Bottom overlay ───────────────────────────────────────────────────────
 	bottomOverlay: {
 		position: 'absolute',
 		bottom: 0,
@@ -207,7 +638,7 @@ const styles = StyleSheet.create({
 	},
 	bottomRow: {
 		alignItems: 'center',
-		paddingBottom: 24,
+		paddingBottom: 80,
 	},
 	captureButton: {
 		width: 72,

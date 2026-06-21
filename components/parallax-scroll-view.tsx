@@ -1,3 +1,4 @@
+import { useBottomTabBarHeight } from '@react-navigation/bottom-tabs';
 import { StyleSheet } from 'react-native';
 import Animated, {
 	useAnimatedRef,
@@ -15,6 +16,10 @@ export default function ParallaxScrollView(props: any) {
 	const scrollRef = useAnimatedRef<Animated.ScrollView>();
 	const tabBar = useTabBarVisibility();
 	const lastScrollY = useSharedValue(0);
+	// Returns the rendered height of the bottom tab bar (items + safe-area inset).
+	// Defaults to 0 when called outside a tab navigator (e.g. nested stacks),
+	// so this is safe to call unconditionally everywhere ParallaxScrollView is used.
+	const tabBarHeight = useBottomTabBarHeight();
 
 	const scrollHandler = useAnimatedScrollHandler((event) => {
 		const currentY = event.contentOffset.y;
@@ -41,6 +46,7 @@ export default function ParallaxScrollView(props: any) {
 			style={{ backgroundColor, flex: 1 }}
 			scrollEventThrottle={16}
 			onScroll={scrollHandler}
+			contentContainerStyle={{ paddingBottom: tabBarHeight }}
 		>
 			<ThemedView style={props.style != null ? props.style : styles.content}>
 				{props.children}

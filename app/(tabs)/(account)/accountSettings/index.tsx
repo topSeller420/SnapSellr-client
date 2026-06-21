@@ -167,7 +167,7 @@ export default function AccountSettingsIndex() {
 	}
 
 	return (
-		<ParallaxScrollView>
+		<ParallaxScrollView style={styles.overrideParallaxScrollView}>
 			<Modal
 				visible={isEmailModalVisible}
 				animationType="slide"
@@ -424,6 +424,15 @@ export default function AccountSettingsIndex() {
 }
 
 const styles = StyleSheet.create({
+	overrideParallaxScrollView: {
+		flex: 1,
+		paddingTop: 20,
+		paddingRight: 32,
+		paddingBottom: 32,
+		paddingLeft: 32,
+		gap: 16,
+		overflow: 'hidden'
+	},
 	linkButton: {
 		borderColor: Colors.dark.border,
 		borderWidth: 1,
