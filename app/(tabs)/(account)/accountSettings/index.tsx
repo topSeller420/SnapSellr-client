@@ -48,7 +48,7 @@ export default function AccountSettingsIndex() {
 
 	function getAccountSettings() {
 		const pathVariables = {
-			id: "bd28da97-116d-4955-bbc5-7128e0c8f005"
+			id: "7d120fd0-672a-4259-a9e0-ff16fb183758"
 		};
 		getSellerProfileAPI(pathVariables, (response: Seller) => {
 			console.log("response: ", response);
@@ -72,7 +72,7 @@ export default function AccountSettingsIndex() {
 
 	function updateAccountSettings(fieldChangesToValues: { [key: string]: unknown }) {
 		const pathVariables = {
-			id: "bd28da97-116d-4955-bbc5-7128e0c8f005"
+			id: "7d120fd0-672a-4259-a9e0-ff16fb183758"
 		};
 		const payload = {
 			email: emailValue,
@@ -143,7 +143,7 @@ export default function AccountSettingsIndex() {
 
 	function deleteAccount() {
 		const pathVariables = {
-			id: "bd28da97-116d-4955-bbc5-7128e0c8f005"
+			id: "7d120fd0-672a-4259-a9e0-ff16fb183758"
 		};
 		deleteSellerProfileAPI(pathVariables, (response: string) => {
 			console.log("delete response: ", response);

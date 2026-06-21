@@ -35,6 +35,9 @@ const MAPPING = {
   'envelope': 'mail-outline',
   'location': 'location-on',
   'lock': 'lock-outline',
+  'camera': 'camera-alt',
+  'bolt.fill': 'flash-on',
+  'bolt.slash': 'flash-off',
 } as IconMapping;
 
 /**

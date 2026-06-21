@@ -74,6 +74,9 @@
     },
     "plugins": [
       "expo-router",
+      ["expo-camera", {
+        "cameraPermission": "SnapSellr uses your camera to scan items for inventory management and point of sale."
+      }],
       [
         "expo-splash-screen",
         {
