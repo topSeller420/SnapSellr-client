@@ -437,7 +437,9 @@ function ProdScanScreen() {
 // Metro bundles only the branch that matches __DEV__ at build time, so each
 // build only includes the camera library it actually needs.
 export default function ScanScreen() {
-	return __DEV__ ? <DevScanScreen /> : <ProdScanScreen />;
+	// return __DEV__ ? <DevScanScreen /> : <ProdScanScreen />;
+	// Can only be used for android for now
+	return <ProdScanScreen />;
 }
 
 // ── Photo preview styles ──────────────────────────────────────────────────────

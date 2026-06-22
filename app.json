@@ -1,4 +1,3 @@
-// Reference: https://docs.expo.dev/versions/latest/config/app/
 {
   "expo": {
     "name": "SnapSellr",
@@ -6,7 +5,6 @@
     "slug": "SnapSellr",
     "version": "1.0.0",
     "orientation": "portrait",
-    // Update this to an actual mobile icon
     "icon": "./assets/images/SnapSellr_icon.png",
     "scheme": "snapsellr",
     "userInterfaceStyle": "automatic",
@@ -19,64 +17,20 @@
       }
     },
     "newArchEnabled": true,
-    // Update this to use an actual splash animation
-    // "splash": {
-    //   "image": "./assets/images/splash-icon.png",
-    //   "resizeMode": "contain",
-    //   "backgroundColor": "#ffffff"
-    // },
     "ios": {
-      // For now set to false, since we're not focusing on iPad support
       "supportsTablet": false,
-      // Update this to point to an actual manifest file
-      // "publishManifestPath": "ios/snapSellr/Supporting/manifest.json",
-      // Come up with a build number strategy; it should match apple's requirements: https://developer.apple.com/documentation/bundleresources/information-property-list/cfbundleversion
-      // "buildNumber": "1.0.0",
-      // iOS version must be in the format X.Y.Z
-      // "version": "1.0.0",
-      // Update this to an actual iOS icon
-      // "icon":
-      // Update this to point to the actual App Store URL when published
-      // "appStoreUrl": "https://apps.apple.com/app/idXXXXXXXXX",
-      // Full reference here: https://developer.apple.com/documentation/bundleresources/privacy-manifest-files
-      // WE NEED TO UPDATE THIS BEFORE PUBLISHING TO THE APP STORE
-      // "privacyManifests:": {
-      //   "camera": {
-      //     "purpose": "Allow SnapSellr to access your camera to take photos of items you want to sell."
-      //   },
-      //   "photoLibrary": {
-      //     "purpose": "Allow SnapSellr to access your photo library to select photos of items you want to sell."
-      //   }
-      // },
-      // Update this later once we have associated domains
-      // "associatedDomains":[],
       "usesBroadcastPushNotifications": false,
       "newArchEnabled": true,
       "infoPlist": {
-        "NSCameraUsageDescription": "SnapSellr uses your camera to scan items for inventory management and point of sale."
+        "NSCameraUsageDescription": "SnapSellr uses your camera to scan items for inventory management and point of sale.",
+        "ITSAppUsesNonExemptEncryption": false
       },
       "bundleIdentifier": "com.anonymous.snapsellr"
     },
     "android": {
-      // Design adaptive icons in the future and replace these assets
-      // "adaptiveIcon": {
-      //   "backgroundColor": "#E6F4FE",
-      //   "foregroundImage": "./assets/images/android-icon-foreground.png",
-      //   "backgroundImage": "./assets/images/android-icon-background.png",
-      //   "monochromeImage": "./assets/images/android-icon-monochrome.png"
-      // },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
-      // Update this to point to an actual manifest file
-      // "publishManifestPath": "android/app/src/main/AndroidManifest.xml",
       "versionCode": 1,
-      // Update this to an actual Android icon
-      // "icon": "",
-      // Update this to point to the actual Play Store URL when published
-      // "playStoreUrl": "https://play.google.com/store/apps/details?id=com.yourcompany.snapsellr",
-      // Full reference here: https://developer.android.com/guide/topics/permissions/overview
-      // "permissions": [],
-      // "blockedPermissions": [],
       "permissions": [
         "android.permission.CAMERA"
       ],
