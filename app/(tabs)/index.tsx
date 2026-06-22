@@ -6,11 +6,12 @@
  * Both share the same UI shell (framing guide, focus ring, mode toggle, flash).
  */
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, AppState, Image, Modal, Pressable, StyleSheet, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
 	runOnJS,
+	useAnimatedProps,
 	useAnimatedStyle,
 	useSharedValue,
 	withDelay,
@@ -53,8 +54,8 @@ function PermissionScreen({ onRequest }: { onRequest: () => void }) {
 interface CameraShellProps {
 	/** The raw camera viewfinder node — rendered below all overlays. */
 	cameraNode: React.ReactNode;
-	/** Tap gesture used to trigger the focus ring animation. */
-	tapGesture: ReturnType<typeof Gesture.Tap>;
+	/** Active gesture — tap for focus, or Simultaneous(tap, pinch) when zoom is enabled. */
+	tapGesture: any; // accepts TapGesture | SimultaneousGesture
 	/** Reanimated style for the focus ring. */
 	focusRingStyle: ReturnType<typeof useAnimatedStyle>;
 	mode: ScanMode;
@@ -62,6 +63,8 @@ interface CameraShellProps {
 	flash: FlashState;
 	setFlash: (updater: (f: FlashState) => FlashState) => void;
 	onCapture: () => void;
+	/** Optional zoom level badge rendered between the framing guide and capture button. */
+	zoomIndicator?: React.ReactNode;
 }
 
 function CameraShell({
@@ -73,6 +76,7 @@ function CameraShell({
 	flash,
 	setFlash,
 	onCapture,
+	zoomIndicator,
 }: CameraShellProps) {
 	return (
 		<View style={styles.container}>
@@ -97,6 +101,13 @@ function CameraShell({
 					<View style={[styles.bracketV, { bottom: 0, right: 0 }]} />
 				</View>
 			</View>
+
+			{/* Zoom level badge — positioned between framing guide and capture button */}
+			{zoomIndicator && (
+				<View style={styles.zoomIndicatorContainer} pointerEvents="none">
+					{zoomIndicator}
+				</View>
+			)}
 
 			{/* Top: mode toggle + flash */}
 			<SafeAreaView edges={['top']} style={styles.topOverlay}>
@@ -334,6 +345,52 @@ function ProdScanScreen() {
 		{ videoResolution: 'max' }
 	]);
 
+	// ── Zoom ─────────────────────────────────────────────────────────────────────
+	// zoomLevel drives the Camera's zoom prop via useAnimatedProps — fully on the
+	// UI thread so every pinch frame updates the hardware lens without a JS round-trip.
+	// baseZoom captures the zoom at the moment the pinch starts so subsequent scale
+	// deltas are applied multiplicatively from that snapshot.
+	const minZoom: number = device?.minZoom ?? 1;
+	const maxZoom: number = Math.min(device?.maxZoom ?? 8, 8); // cap at 8× for usability
+
+	const zoomLevel = useSharedValue(1);
+	const baseZoom = useSharedValue(1);
+	const zoomBadgeOpacity = useSharedValue(0.65); // subtle at rest
+	const zoomBadgeScale = useSharedValue(1);
+	const [zoomDisplay, setZoomDisplay] = useState('1.0×');
+
+	// Animated zoom badge style — becomes fully opaque + slightly larger while pinching
+	const zoomBadgeAnimStyle = useAnimatedStyle(() => ({
+		opacity: zoomBadgeOpacity.value,
+		transform: [{ scale: zoomBadgeScale.value }],
+	}));
+
+	function setZoomText(val: number) {
+		setZoomDisplay(`${val.toFixed(1)}×`);
+	}
+
+	// Animated camera props — drives zoom directly on the UI thread
+	const AnimatedCamera = useMemo(() => Animated.createAnimatedComponent(Camera), [Camera]);
+	const animatedCameraProps = useAnimatedProps(() => ({ zoom: zoomLevel.value }));
+
+	const pinchGesture = Gesture.Pinch()
+		.onBegin(() => {
+			baseZoom.value = zoomLevel.value;
+			// Make badge prominent while actively zooming
+			zoomBadgeOpacity.value = withTiming(1, { duration: 150 });
+			zoomBadgeScale.value = withTiming(1.15, { duration: 150 });
+		})
+		.onUpdate((event) => {
+			const newZoom = Math.min(Math.max(baseZoom.value * event.scale, minZoom), maxZoom);
+			zoomLevel.value = newZoom;
+			runOnJS(setZoomText)(newZoom);
+		})
+		.onEnd(() => {
+			// Return to subtle resting state after a brief hold
+			zoomBadgeOpacity.value = withDelay(1200, withTiming(0.65, { duration: 400 }));
+			zoomBadgeScale.value = withDelay(1200, withTiming(1, { duration: 400 }));
+		});
+
 	const [mode, setMode] = useState<ScanMode>('inventory');
 	const [flash, setFlash] = useState<FlashState>('off');
 	const [capturedUri, setCapturedUri] = useState<string | null>(null);
@@ -415,6 +472,9 @@ function ProdScanScreen() {
 		runOnJS(triggerHardwareFocus)(event.x, event.y);
 	});
 
+	// Allow tap (focus) and pinch (zoom) to run at the same time
+	const combinedGesture = Gesture.Simultaneous(tapGesture, pinchGesture);
+
 	async function onCapture() {
 		try {
 			const photo = await cameraRef.current?.takePhoto({
@@ -460,7 +520,7 @@ function ProdScanScreen() {
 	return (
 		<CameraShell
 			cameraNode={
-				<Camera
+				<AnimatedCamera
 					ref={cameraRef}
 					device={device}
 					format={format}
@@ -473,15 +533,21 @@ function ProdScanScreen() {
 					videoStabilizationMode="auto"
 					onError={handleCameraError}
 					style={StyleSheet.absoluteFill}
+					animatedProps={animatedCameraProps}
 				/>
 			}
-			tapGesture={tapGesture}
+			tapGesture={combinedGesture}
 			focusRingStyle={focusRingStyle}
 			mode={mode}
 			setMode={setMode}
 			flash={flash}
 			setFlash={setFlash}
 			onCapture={onCapture}
+			zoomIndicator={
+				<Animated.View style={[styles.zoomBadge, zoomBadgeAnimStyle]}>
+					<ThemedText style={styles.zoomBadgeText}>{zoomDisplay}</ThemedText>
+				</Animated.View>
+			}
 		/>
 	);
 }
@@ -709,5 +775,31 @@ const styles = StyleSheet.create({
 		height: 56,
 		borderRadius: 28,
 		backgroundColor: Colors.dark.text,
+	},
+
+	// ── Zoom indicator ─────────────────────────────────────────────────────────
+	// Absolutely centred between the framing guide and the capture button.
+	// Visible at rest (0.65 opacity) so users know pinch-to-zoom is available;
+	// becomes fully opaque and slightly larger while pinching.
+	zoomIndicatorContainer: {
+		position: 'absolute',
+		left: 0,
+		right: 0,
+		bottom: '25%',
+		alignItems: 'center',
+	},
+	zoomBadge: {
+		backgroundColor: 'rgba(0, 0, 0, 0.5)',
+		borderRadius: 20,
+		borderWidth: 1,
+		borderColor: 'rgba(255, 255, 255, 0.2)',
+		paddingVertical: 6,
+		paddingHorizontal: 16,
+	},
+	zoomBadgeText: {
+		fontSize: 14,
+		fontWeight: '600',
+		color: Colors.dark.text,
+		letterSpacing: 0.3,
 	},
 });
