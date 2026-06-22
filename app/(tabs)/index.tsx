@@ -6,8 +6,8 @@
  * Both share the same UI shell (framing guide, focus ring, mode toggle, flash).
  */
 
-import { useRef, useState } from 'react';
-import { Image, Pressable, StyleSheet, View } from 'react-native';
+import { useEffect, useRef, useState } from 'react';
+import { Alert, AppState, Image, Modal, Pressable, StyleSheet, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
 	runOnJS,
@@ -178,38 +178,45 @@ interface PhotoPreviewProps {
  * camera; Use Photo forwards the URI downstream.
  */
 function PhotoPreview({ uri, mode, onRetake, onConfirm }: PhotoPreviewProps) {
+	// Render inside a full-screen Modal so the view is lifted above the
+	// absolutely-positioned tab bar layer. Without this, the tab bar floats
+	// over the bottom buttons regardless of how much padding is applied.
+	// SafeAreaView inside the Modal handles the device's own safe area
+	// (home indicator, gesture bar) independently of the app's navigation.
 	return (
-		<View style={previewStyles.container}>
-			{/* Top bar: mode badge */}
-			<SafeAreaView edges={['top']} style={previewStyles.topBar}>
-				<View style={previewStyles.modeBadge}>
-					<ThemedText style={previewStyles.modeBadgeText}>
-						{mode === 'inventory' ? 'Inventory' : 'POS'}
-					</ThemedText>
-				</View>
-			</SafeAreaView>
+		<Modal visible animationType="fade" statusBarTranslucent>
+			<View style={previewStyles.container}>
+				{/* Top bar: mode badge */}
+				<SafeAreaView edges={['top']} style={previewStyles.topBar}>
+					<View style={previewStyles.modeBadge}>
+						<ThemedText style={previewStyles.modeBadgeText}>
+							{mode === 'inventory' ? 'Inventory' : 'POS'}
+						</ThemedText>
+					</View>
+				</SafeAreaView>
 
-			{/* Photo — fills space between bars.
-			    resizeMode="contain" preserves the sensor's true aspect ratio
-			    so no pixels are cropped or stretched to fit the screen. */}
-			<Image
-				source={{ uri }}
-				style={previewStyles.image}
-				resizeMode="contain"
-			/>
+				{/* Photo — fills space between bars.
+				    resizeMode="contain" preserves the sensor's true aspect ratio
+				    so no pixels are cropped or stretched to fit the screen. */}
+				<Image
+					source={{ uri }}
+					style={previewStyles.image}
+					resizeMode="contain"
+				/>
 
-			{/* Bottom bar: action buttons */}
-			<SafeAreaView edges={['bottom']} style={previewStyles.bottomBar}>
-				<View style={previewStyles.actions}>
-					<Pressable style={previewStyles.retakeButton} onPress={onRetake}>
-						<ThemedText style={previewStyles.retakeText}>Retake</ThemedText>
-					</Pressable>
-					<Pressable style={previewStyles.confirmButton} onPress={onConfirm}>
-						<ThemedText style={previewStyles.confirmText}>Use Photo</ThemedText>
-					</Pressable>
-				</View>
-			</SafeAreaView>
-		</View>
+				{/* Bottom bar: action buttons */}
+				<SafeAreaView edges={['bottom']} style={previewStyles.bottomBar}>
+					<View style={previewStyles.actions}>
+						<Pressable style={previewStyles.retakeButton} onPress={onRetake}>
+							<ThemedText style={previewStyles.retakeText}>Retake</ThemedText>
+						</Pressable>
+						<Pressable style={previewStyles.confirmButton} onPress={onConfirm}>
+							<ThemedText style={previewStyles.confirmText}>Use Photo</ThemedText>
+						</Pressable>
+					</View>
+				</SafeAreaView>
+			</View>
+		</Modal>
 	);
 }
 
@@ -332,6 +339,52 @@ function ProdScanScreen() {
 	const [capturedUri, setCapturedUri] = useState<string | null>(null);
 	const cameraRef = useRef<InstanceType<typeof Camera>>(null);
 
+	// ── (1) AppState guard ──────────────────────────────────────────────────────
+	// Track whether the camera is safe to activate. Starts true on first mount
+	// (no competing app on launch). Whenever the app returns from background we
+	// immediately pause the camera, then re-enable it after a 300 ms buffer
+	// (step 2) that gives the OS time to release the previous session block.
+	const [isCameraReady, setIsCameraReady] = useState(true);
+	const appStateRef = useRef(AppState.currentState);
+
+	useEffect(() => {
+		const subscription = AppState.addEventListener('change', (nextState) => {
+			if (
+				appStateRef.current.match(/background|inactive/) &&
+				nextState === 'active'
+			) {
+				// (2) 300 ms buffer — lets the OS fully tear down the native camera
+				// session that was acquired by whatever app was in the foreground.
+				setIsCameraReady(false);
+				const timer = setTimeout(() => setIsCameraReady(true), 300);
+				appStateRef.current = nextState;
+				return () => clearTimeout(timer);
+			}
+			appStateRef.current = nextState;
+		});
+
+		return () => subscription.remove();
+	}, []);
+
+	// ── (3) onError handler ─────────────────────────────────────────────────────
+	// Vision Camera fires this with a CameraRuntimeError when it fails to acquire
+	// or maintain the camera session (e.g. CAMERA_ALREADY_IN_USE). We show an
+	// informative alert and schedule another readiness cycle so the user can
+	// recover by simply waiting a moment.
+	function handleCameraError(error: unknown) {
+		const msg = error instanceof Error ? error.message : String(error);
+		console.warn('[PROD] Camera error:', msg);
+		Alert.alert(
+			'Camera busy',
+			'The camera is still releasing from another app. Please wait a moment and try again.',
+			[{ text: 'OK' }],
+		);
+		// Reset ready state and retry after a slightly longer delay (500 ms) to
+		// account for the extra round-trip through the error path.
+		setIsCameraReady(false);
+		setTimeout(() => setIsCameraReady(true), 500);
+	}
+
 	const focusX = useSharedValue(0);
 	const focusY = useSharedValue(0);
 	const focusOpacity = useSharedValue(0);
@@ -364,15 +417,12 @@ function ProdScanScreen() {
 
 	async function onCapture() {
 		try {
-			// (2) qualityPrioritization:'quality' — hardware sharpening + multi-frame processing
 			const photo = await cameraRef.current?.takePhoto({
 				qualityPrioritization: 'quality',
 				flash: flash === 'on' ? 'on' : 'off',
 				enableShutterSound: true,
 			});
 			if (photo?.path) {
-				// vision-camera v4 returns a raw OS path without file:// scheme.
-				// toImageUri adds the prefix so Android's Image component can load it.
 				setCapturedUri(toImageUri(photo.path));
 			}
 		} catch (e) {
@@ -410,15 +460,18 @@ function ProdScanScreen() {
 	return (
 		<CameraShell
 			cameraNode={
-				// (3) videoStabilizationMode:"auto" — OIS or digital stabilization
-				// isActive is also false while previewing so the sensor powers down
 				<Camera
 					ref={cameraRef}
 					device={device}
 					format={format}
-					isActive={isFocused && !capturedUri}
+					// isActive incorporates all three guards:
+					//   isFocused     — tab is visible
+					//   isCameraReady — OS buffer has elapsed after foreground transition
+					//   !capturedUri  — sensor powers down while previewing the photo
+					isActive={isFocused && isCameraReady && !capturedUri}
 					photo={true}
 					videoStabilizationMode="auto"
+					onError={handleCameraError}
 					style={StyleSheet.absoluteFill}
 				/>
 			}

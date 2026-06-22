@@ -1,4 +1,3 @@
-import { useBottomTabBarHeight } from '@react-navigation/bottom-tabs';
 import { StyleSheet } from 'react-native';
 import Animated, {
 	useAnimatedRef,
@@ -6,20 +5,30 @@ import Animated, {
 	useSharedValue,
 	withTiming,
 } from 'react-native-reanimated';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ThemedView } from '@/components/themed-view';
 import { useTabBarVisibility } from '@/context/tab-bar-visibility';
 import { useThemeColor } from '@/hooks/use-theme-color';
+
+// Height of the tab bar icon+label row on both platforms.
+// Matches the height used when the bar was explicitly sized; kept as a constant
+// so there's one place to change it if the tab bar design changes.
+const TAB_BAR_ITEM_HEIGHT = 60;
 
 export default function ParallaxScrollView(props: any) {
 	const backgroundColor = useThemeColor({}, 'background');
 	const scrollRef = useAnimatedRef<Animated.ScrollView>();
 	const tabBar = useTabBarVisibility();
 	const lastScrollY = useSharedValue(0);
-	// Returns the rendered height of the bottom tab bar (items + safe-area inset).
-	// Defaults to 0 when called outside a tab navigator (e.g. nested stacks),
-	// so this is safe to call unconditionally everywhere ParallaxScrollView is used.
-	const tabBarHeight = useBottomTabBarHeight();
+
+	// useSafeAreaInsets().bottom is the device's true bottom clearance
+	// (home-indicator height on iPhone X+, 0 on flat-bottomed devices / Android).
+	// Adding the fixed tab-bar-item height gives the total space the floating
+	// tab bar occupies, regardless of whether a BottomTabBarHeightContext is
+	// available (it isn't for our custom absolute-positioned tab bar).
+	const { bottom: safeAreaBottom } = useSafeAreaInsets();
+	const bottomPadding = TAB_BAR_ITEM_HEIGHT + safeAreaBottom;
 
 	const scrollHandler = useAnimatedScrollHandler((event) => {
 		const currentY = event.contentOffset.y;
@@ -46,7 +55,7 @@ export default function ParallaxScrollView(props: any) {
 			style={{ backgroundColor, flex: 1 }}
 			scrollEventThrottle={16}
 			onScroll={scrollHandler}
-			contentContainerStyle={{ paddingBottom: tabBarHeight }}
+			contentContainerStyle={{ paddingBottom: bottomPadding }}
 		>
 			<ThemedView style={props.style != null ? props.style : styles.content}>
 				{props.children}

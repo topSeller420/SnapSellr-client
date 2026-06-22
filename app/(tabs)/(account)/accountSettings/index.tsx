@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Modal, Pressable, StyleSheet, TextInput, TouchableOpacity, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import ParallaxScrollView from '@/components/parallax-scroll-view';
 import { ThemedText } from '@/components/themed-text';
@@ -20,6 +21,7 @@ function hasCompleteAccountState(account: AccountState): boolean {
 export default function AccountSettingsIndex() {
 	const dispatch = useAppDispatch();
 	const account = useAppSelector(state => state.account);
+	const { bottom: safeAreaBottom } = useSafeAreaInsets();
 
 	const [isEmailModalVisible, setIsEmailModalVisible] = useState(false);
 	const [emailValue, setEmailValue] = useState('');
@@ -175,7 +177,7 @@ export default function AccountSettingsIndex() {
 				transparent={true}
 			>
 				<View style={styles.modal}>
-					<ThemedView style={styles.modalContainer}>
+					<ThemedView style={[styles.modalContainer, { paddingBottom: safeAreaBottom + 24 }]}>
 						<View style={styles.dragHandle} />
 						<ThemedText style={styles.modalHeader}>Update email</ThemedText>
 						<TextInput
@@ -205,7 +207,7 @@ export default function AccountSettingsIndex() {
 				transparent={true}
 			>
 				<View style={styles.modal}>
-					<ThemedView style={styles.modalContainer}>
+					<ThemedView style={[styles.modalContainer, { paddingBottom: safeAreaBottom + 24 }]}>
 						<View style={styles.dragHandle} />
 						<ThemedText style={styles.modalHeader}>Update location</ThemedText>
 						<TextInput
@@ -301,7 +303,7 @@ export default function AccountSettingsIndex() {
 				transparent={true}
 			>
 				<View style={styles.modal}>
-					<ThemedView style={styles.modalContainer}>
+					<ThemedView style={[styles.modalContainer, { paddingBottom: safeAreaBottom + 24 }]}>
 						<View style={styles.dragHandle} />
 						<ThemedText style={styles.modalHeader}>Update password</ThemedText>
 						<TextInput
@@ -377,7 +379,7 @@ export default function AccountSettingsIndex() {
 				transparent={true}
 			>
 				<View style={styles.modal}>
-					<ThemedView style={styles.modalContainer}>
+					<ThemedView style={[styles.modalContainer, { paddingBottom: safeAreaBottom + 24 }]}>
 						<View style={styles.dragHandle} />
 						<View style={styles.deleteModalIconContainer}>
 							<IconSymbol
