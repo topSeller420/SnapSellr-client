@@ -7,8 +7,8 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, AppState, Image, Modal, Pressable, StyleSheet, View } from 'react-native';
-import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import { ActivityIndicator, AppState, Image, Modal, Pressable, StyleSheet, View } from 'react-native';
+import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
 import Animated, {
 	runOnJS,
 	useAnimatedProps,
@@ -176,57 +176,242 @@ function toImageUri(path: string): string {
 	return `file://${path}`;
 }
 
+/** Normalised crop region (0..1) relative to the displayed image area. */
+type CropRegion = { x: number; y: number; size: number };
+
 interface PhotoPreviewProps {
 	uri: string;
 	mode: ScanMode;
 	onRetake: () => void;
-	onConfirm: () => void;
+	/** Called with the 1:1 crop region the user positioned, or undefined if
+	 *  layout info wasn't available yet (extremely rare edge case). */
+	onConfirm: (crop?: CropRegion) => void;
 }
 
 /**
- * Full-screen preview shown after capture so the user can verify the shot
- * before it's passed to image recognition. Retake dismisses back to the
- * camera; Use Photo forwards the URI downstream.
+ * Full-screen preview shown after capture. The user can:
+ *   • Pinch the photo to zoom in and inspect detail.
+ *   • Pan (1-finger drag) to reframe after zooming.
+ *   • Drag the 1:1 crop box to select the region for image recognition.
+ *   • Drag the ◢ corner handle to resize the crop box.
+ * "Identify" passes the normalised CropRegion downstream.
  */
 function PhotoPreview({ uri, mode, onRetake, onConfirm }: PhotoPreviewProps) {
-	// Render inside a full-screen Modal so the view is lifted above the
-	// absolutely-positioned tab bar layer. Without this, the tab bar floats
-	// over the bottom buttons regardless of how much padding is applied.
-	// SafeAreaView inside the Modal handles the device's own safe area
-	// (home indicator, gesture bar) independently of the app's navigation.
+	// ── Container dimensions (populated on layout, used to clamp gestures) ────
+	const containerW = useSharedValue(0);
+	const containerH = useSharedValue(0);
+
+	// ── Image zoom + pan ──────────────────────────────────────────────────────
+	const imgScale    = useSharedValue(1);
+	const savedScale  = useSharedValue(1);
+	const imgTx       = useSharedValue(0);
+	const imgTy       = useSharedValue(0);
+	const savedTx     = useSharedValue(0);
+	const savedTy     = useSharedValue(0);
+
+	// ── Crop box (1:1) ─────────────────────────────────────────────────────────
+	const cropSz      = useSharedValue(0); // initialised to 0; set on first layout
+	const cropL       = useSharedValue(0);
+	const cropT       = useSharedValue(0);
+	const savedCropSz = useSharedValue(0);
+	const savedCropL  = useSharedValue(0);
+	const savedCropT  = useSharedValue(0);
+
+	// ── Animated styles ───────────────────────────────────────────────────────
+	const imgStyle = useAnimatedStyle(() => ({
+		transform: [
+			{ scale: imgScale.value },
+			{ translateX: imgTx.value },
+			{ translateY: imgTy.value },
+		],
+	}));
+
+	const cropBoxStyle = useAnimatedStyle(() => ({
+		position: 'absolute' as const,
+		left:   cropL.value,
+		top:    cropT.value,
+		width:  cropSz.value,
+		height: cropSz.value,
+	}));
+
+	// Four dim panels that surround the clear crop window
+	const topDimStyle = useAnimatedStyle(() => ({
+		position: 'absolute' as const,
+		left: 0, right: 0, top: 0,
+		height: Math.max(0, cropT.value),
+	}));
+	const leftDimStyle = useAnimatedStyle(() => ({
+		position: 'absolute' as const,
+		left: 0,
+		top:    Math.max(0, cropT.value),
+		width:  Math.max(0, cropL.value),
+		height: Math.max(0, cropSz.value),
+	}));
+	const rightDimStyle = useAnimatedStyle(() => ({
+		position: 'absolute' as const,
+		right: 0,
+		top:    Math.max(0, cropT.value),
+		width:  Math.max(0, containerW.value - cropL.value - cropSz.value),
+		height: Math.max(0, cropSz.value),
+	}));
+	const bottomDimStyle = useAnimatedStyle(() => ({
+		position: 'absolute' as const,
+		left: 0, right: 0,
+		top:    Math.max(0, cropT.value + cropSz.value),
+		bottom: 0,
+	}));
+
+	// ── Gestures ──────────────────────────────────────────────────────────────
+	const MIN_CROP = 80;
+
+	// Pinch to zoom the photo (1× – 5×)
+	const imgPinch = Gesture.Pinch()
+		.onStart(() => { savedScale.value = imgScale.value; })
+		.onUpdate((e) => {
+			imgScale.value = Math.min(Math.max(savedScale.value * e.scale, 1), 5);
+		});
+
+	// 1-finger pan to reframe (useful after zooming in)
+	const imgPan = Gesture.Pan()
+		.minPointers(1).maxPointers(1)
+		.onStart(() => { savedTx.value = imgTx.value; savedTy.value = imgTy.value; })
+		.onUpdate((e) => {
+			imgTx.value = savedTx.value + e.translationX;
+			imgTy.value = savedTy.value + e.translationY;
+		});
+
+	const imageGesture = Gesture.Simultaneous(imgPinch, imgPan);
+
+	// Drag the crop box to reposition it within the container
+	const cropPan = Gesture.Pan()
+		.onStart(() => { savedCropL.value = cropL.value; savedCropT.value = cropT.value; })
+		.onUpdate((e) => {
+			cropL.value = Math.min(
+				Math.max(savedCropL.value + e.translationX, 0),
+				containerW.value - cropSz.value,
+			);
+			cropT.value = Math.min(
+				Math.max(savedCropT.value + e.translationY, 0),
+				containerH.value - cropSz.value,
+			);
+		});
+
+	// Drag the ◢ corner handle (diagonal) to resize the crop box
+	const cornerResize = Gesture.Pan()
+		.onStart(() => { savedCropSz.value = cropSz.value; })
+		.onUpdate((e) => {
+			const delta = (e.translationX + e.translationY) / 2;
+			const maxSz = Math.min(containerW.value, containerH.value);
+			const newSz = Math.min(Math.max(savedCropSz.value + delta, MIN_CROP), maxSz);
+			// Clamp position so the box never leaves the container
+			cropL.value = Math.min(cropL.value, containerW.value - newSz);
+			cropT.value = Math.min(cropT.value, containerH.value - newSz);
+			cropSz.value = newSz;
+		});
+
+	// ── Helpers ───────────────────────────────────────────────────────────────
+	function initCropBox(width: number, height: number) {
+		// Start at 72% of the shorter edge, centred
+		const sz = Math.min(width, height) * 0.72;
+		cropSz.value      = sz;
+		savedCropSz.value = sz;
+		cropL.value       = (width  - sz) / 2;
+		savedCropL.value  = cropL.value;
+		cropT.value       = (height - sz) / 2;
+		savedCropT.value  = cropT.value;
+	}
+
+	function handleConfirm() {
+		const crop: CropRegion | undefined = containerW.value > 0
+			? {
+				x:    cropL.value / containerW.value,
+				y:    cropT.value / containerH.value,
+				size: cropSz.value / Math.min(containerW.value, containerH.value),
+			  }
+			: undefined;
+		onConfirm(crop);
+	}
+
 	return (
 		<Modal visible animationType="fade" statusBarTranslucent>
-			<View style={previewStyles.container}>
-				{/* Top bar: mode badge */}
-				<SafeAreaView edges={['top']} style={previewStyles.topBar}>
-					<View style={previewStyles.modeBadge}>
-						<ThemedText style={previewStyles.modeBadgeText}>
-							{mode === 'inventory' ? 'Inventory' : 'POS'}
-						</ThemedText>
-					</View>
-				</SafeAreaView>
+			{/* Modal renders in a separate native window — the GestureHandlerRootView
+			    in app/_layout.tsx doesn't cover it, so every Gesture.* handler inside
+			    the Modal is unregistered unless we add a new root here. */}
+			<GestureHandlerRootView style={previewStyles.gestureRoot}>
+				<View style={previewStyles.container}>
+					{/* Top bar: mode badge */}
+					<SafeAreaView edges={['top']} style={previewStyles.topBar}>
+						<View style={previewStyles.modeBadge}>
+							<ThemedText style={previewStyles.modeBadgeText}>
+								{mode === 'inventory' ? 'Inventory' : 'POS'}
+							</ThemedText>
+						</View>
+					</SafeAreaView>
 
-				{/* Photo — fills space between bars.
-				    resizeMode="contain" preserves the sensor's true aspect ratio
-				    so no pixels are cropped or stretched to fit the screen. */}
-				<Image
-					source={{ uri }}
-					style={previewStyles.image}
-					resizeMode="contain"
-				/>
+					{/* ── Image area ─────────────────────────────────────────────── */}
+					<GestureDetector gesture={imageGesture}>
+						<View
+							style={previewStyles.imageContainer}
+							onLayout={({ nativeEvent: { layout: { width, height } } }) => {
+								containerW.value = width;
+								containerH.value = height;
+								// Only set up on first layout so user adjustments are preserved
+								if (cropSz.value === 0) initCropBox(width, height);
+							}}
+						>
+							{/* The photo, scaled and panned by the image gesture */}
+							<Animated.View style={[StyleSheet.absoluteFill, imgStyle]}>
+								<Image source={{ uri }} style={StyleSheet.absoluteFill} resizeMode="cover" />
+							</Animated.View>
 
-				{/* Bottom bar: action buttons */}
-				<SafeAreaView edges={['bottom']} style={previewStyles.bottomBar}>
-					<View style={previewStyles.actions}>
-						<Pressable style={previewStyles.retakeButton} onPress={onRetake}>
-							<ThemedText style={previewStyles.retakeText}>Retake</ThemedText>
-						</Pressable>
-						<Pressable style={previewStyles.confirmButton} onPress={onConfirm}>
-							<ThemedText style={previewStyles.confirmText}>Use Photo</ThemedText>
-						</Pressable>
-					</View>
-				</SafeAreaView>
-			</View>
+							{/* Dim panels outside the crop window */}
+							<Animated.View style={[previewStyles.dimPanel, topDimStyle]}    pointerEvents="none" />
+							<Animated.View style={[previewStyles.dimPanel, leftDimStyle]}   pointerEvents="none" />
+							<Animated.View style={[previewStyles.dimPanel, rightDimStyle]}  pointerEvents="none" />
+							<Animated.View style={[previewStyles.dimPanel, bottomDimStyle]} pointerEvents="none" />
+
+							{/* Crop box: drag to move, corner handle to resize */}
+							<GestureDetector gesture={cropPan}>
+								<Animated.View style={cropBoxStyle}>
+									{/* L-shaped corner brackets — yellow to distinguish from viewfinder */}
+									<View style={[previewStyles.cropBracketH, { top: 0, left: 0 }]} />
+									<View style={[previewStyles.cropBracketV, { top: 0, left: 0 }]} />
+									<View style={[previewStyles.cropBracketH, { top: 0, right: 0 }]} />
+									<View style={[previewStyles.cropBracketV, { top: 0, right: 0 }]} />
+									<View style={[previewStyles.cropBracketH, { bottom: 0, left: 0 }]} />
+									<View style={[previewStyles.cropBracketV, { bottom: 0, left: 0 }]} />
+									<View style={[previewStyles.cropBracketH, { bottom: 0, right: 0 }]} />
+									<View style={[previewStyles.cropBracketV, { bottom: 0, right: 0 }]} />
+
+									{/* ◢ resize handle at bottom-right corner */}
+									<GestureDetector gesture={cornerResize}>
+										<View style={previewStyles.resizeHandle}>
+											<ThemedText style={previewStyles.resizeHandleIcon}>◢</ThemedText>
+										</View>
+									</GestureDetector>
+								</Animated.View>
+							</GestureDetector>
+						</View>
+					</GestureDetector>
+
+					{/* Gesture hint */}
+					<ThemedText style={previewStyles.hint}>
+						Drag box to reposition · Drag ◢ to resize · Pinch to zoom
+					</ThemedText>
+
+					{/* Bottom bar: action buttons */}
+					<SafeAreaView edges={['bottom']} style={previewStyles.bottomBar}>
+						<View style={previewStyles.actions}>
+							<Pressable style={previewStyles.retakeButton} onPress={onRetake}>
+								<ThemedText style={previewStyles.retakeText}>Retake</ThemedText>
+							</Pressable>
+							<Pressable style={previewStyles.confirmButton} onPress={handleConfirm}>
+								<ThemedText style={previewStyles.confirmText}>Identify</ThemedText>
+							</Pressable>
+						</View>
+					</SafeAreaView>
+				</View>
+			</GestureHandlerRootView>
 		</Modal>
 	);
 }
@@ -287,10 +472,10 @@ function DevScanScreen() {
 				uri={capturedUri}
 				mode={mode}
 				onRetake={() => setCapturedUri(null)}
-				onConfirm={() => {
-					console.log(`[DEV][${mode.toUpperCase()}] confirmed:`, capturedUri);
+				onConfirm={(crop) => {
+					console.log(`[DEV][${mode.toUpperCase()}] confirmed:`, capturedUri, 'crop:', crop);
 					setCapturedUri(null);
-					// TODO: pass capturedUri into image recognition for inventory / POS flow
+					// TODO: pass capturedUri + crop into image recognition for inventory / POS flow
 				}}
 			/>
 		);
@@ -396,23 +581,32 @@ function ProdScanScreen() {
 	const [capturedUri, setCapturedUri] = useState<string | null>(null);
 	const cameraRef = useRef<InstanceType<typeof Camera>>(null);
 
-	// ── (1) AppState guard ──────────────────────────────────────────────────────
-	// Track whether the camera is safe to activate. Starts true on first mount
-	// (no competing app on launch). Whenever the app returns from background we
-	// immediately pause the camera, then re-enable it after a 300 ms buffer
-	// (step 2) that gives the OS time to release the previous session block.
+	// ── AppState lifecycle ───────────────────────────────────────────────────────
+	// isCameraReady drives both whether the Camera is mounted AND whether to show
+	// the "Freeing the camera" spinner in place of the viewfinder.
+	//
+	// State machine:
+	//   active (first launch)  → isCameraReady = true  (camera mounts immediately)
+	//   active → background    → isCameraReady = false (Camera unmounted; OS takes ownership)
+	//   background → active    → isCameraReady = false (spinner visible)
+	//                            300 ms later → isCameraReady = true (camera remounts)
 	const [isCameraReady, setIsCameraReady] = useState(true);
 	const appStateRef = useRef(AppState.currentState);
 
 	useEffect(() => {
 		const subscription = AppState.addEventListener('change', (nextState) => {
-			if (
+			if (nextState.match(/background|inactive/)) {
+				// App is leaving the foreground — unmount the camera immediately so
+				// the OS can hand the hardware to whichever app the user switches to.
+				setIsCameraReady(false);
+			} else if (
 				appStateRef.current.match(/background|inactive/) &&
 				nextState === 'active'
 			) {
-				// (2) 300 ms buffer — lets the OS fully tear down the native camera
-				// session that was acquired by whatever app was in the foreground.
-				setIsCameraReady(false);
+				// App is returning to foreground. isCameraReady is already false
+				// (set above when we went to background), so the spinner is visible.
+				// Wait 300 ms for the OS to fully release the previous session block
+				// before remounting the Camera component.
 				const timer = setTimeout(() => setIsCameraReady(true), 300);
 				appStateRef.current = nextState;
 				return () => clearTimeout(timer);
@@ -423,21 +617,13 @@ function ProdScanScreen() {
 		return () => subscription.remove();
 	}, []);
 
-	// ── (3) onError handler ─────────────────────────────────────────────────────
-	// Vision Camera fires this with a CameraRuntimeError when it fails to acquire
-	// or maintain the camera session (e.g. CAMERA_ALREADY_IN_USE). We show an
-	// informative alert and schedule another readiness cycle so the user can
-	// recover by simply waiting a moment.
+	// ── Camera error handler ─────────────────────────────────────────────────────
+	// Vision Camera fires this with a CameraRuntimeError when it cannot acquire or
+	// maintain the hardware session (e.g. CAMERA_ALREADY_IN_USE). Instead of an
+	// alert, we show the same "Freeing the camera" spinner and schedule a recovery
+	// cycle — the UI stays coherent without interrupting the user with a dialog.
 	function handleCameraError(error: unknown) {
-		const msg = error instanceof Error ? error.message : String(error);
-		console.warn('[PROD] Camera error:', msg);
-		Alert.alert(
-			'Camera busy',
-			'The camera is still releasing from another app. Please wait a moment and try again.',
-			[{ text: 'OK' }],
-		);
-		// Reset ready state and retry after a slightly longer delay (500 ms) to
-		// account for the extra round-trip through the error path.
+		console.warn('[PROD] Camera error:', error instanceof Error ? error.message : String(error));
 		setIsCameraReady(false);
 		setTimeout(() => setIsCameraReady(true), 500);
 	}
@@ -480,7 +666,6 @@ function ProdScanScreen() {
 			const photo = await cameraRef.current?.takePhoto({
 				qualityPrioritization: 'quality',
 				flash: flash === 'on' ? 'on' : 'off',
-				enableShutterSound: true,
 			});
 			if (photo?.path) {
 				setCapturedUri(toImageUri(photo.path));
@@ -508,27 +693,37 @@ function ProdScanScreen() {
 				uri={capturedUri}
 				mode={mode}
 				onRetake={() => setCapturedUri(null)}
-				onConfirm={() => {
-					console.log(`[PROD][${mode.toUpperCase()}] confirmed:`, capturedUri);
+				onConfirm={(crop) => {
+					console.log(`[PROD][${mode.toUpperCase()}] confirmed:`, capturedUri, 'crop:', crop);
 					setCapturedUri(null);
-					// TODO: pass capturedUri into image recognition for inventory / POS flow
+					// TODO: pass capturedUri + crop into image recognition for inventory / POS flow
 				}}
 			/>
+		);
+	}
+
+	// Camera is releasing (background transition or recovering from error).
+	// Show a non-disruptive spinner instead of a dialog so the user can see
+	// the app is actively freeing the hardware resource.
+	if (!isCameraReady) {
+		return (
+			<View style={styles.cameraLoadingContainer}>
+				<ActivityIndicator size="large" color={Colors.dark.tint} />
+				<ThemedText style={styles.cameraLoadingText}>Freeing the camera</ThemedText>
+			</View>
 		);
 	}
 
 	return (
 		<CameraShell
 			cameraNode={
+				// Camera is only mounted when isCameraReady is true (guarded above),
+				// so isActive no longer needs to include isCameraReady.
 				<AnimatedCamera
 					ref={cameraRef}
 					device={device}
 					format={format}
-					// isActive incorporates all three guards:
-					//   isFocused     — tab is visible
-					//   isCameraReady — OS buffer has elapsed after foreground transition
-					//   !capturedUri  — sensor powers down while previewing the photo
-					isActive={isFocused && isCameraReady && !capturedUri}
+					isActive={isFocused && !capturedUri}
 					photo={true}
 					videoStabilizationMode="auto"
 					onError={handleCameraError}
@@ -562,7 +757,13 @@ export default function ScanScreen() {
 }
 
 // ── Photo preview styles ──────────────────────────────────────────────────────
+const CROP_BRACKET_LEN   = 22;
+const CROP_BRACKET_THICK = 3;
+
 const previewStyles = StyleSheet.create({
+	gestureRoot: {
+		flex: 1,
+	},
 	container: {
 		flex: 1,
 		backgroundColor: '#000',
@@ -583,15 +784,57 @@ const previewStyles = StyleSheet.create({
 		fontWeight: '600',
 		color: Colors.dark.text,
 	},
-	// flex: 1 fills all space between topBar and bottomBar.
-	// resizeMode="contain" (set inline) letterboxes the image so the sensor's
-	// true aspect ratio is preserved — no pixel cropping or stretching.
-	image: {
+	// The image container fills all space between topBar and bottomBar.
+	// overflow:'hidden' clips the photo when zoomed so it stays within its bounds.
+	imageContainer: {
 		flex: 1,
 		width: '100%',
+		overflow: 'hidden',
+	},
+	// Semi-transparent dim panel covering areas outside the crop window
+	dimPanel: {
+		backgroundColor: 'rgba(0, 0, 0, 0.55)',
+	},
+	// Yellow L-shaped corner brackets on the crop box — distinct from the
+	// white viewfinder brackets so users can tell them apart at a glance.
+	cropBracketH: {
+		position: 'absolute',
+		width: CROP_BRACKET_LEN,
+		height: CROP_BRACKET_THICK,
+		backgroundColor: Colors.dark.tint,
+	},
+	cropBracketV: {
+		position: 'absolute',
+		width: CROP_BRACKET_THICK,
+		height: CROP_BRACKET_LEN,
+		backgroundColor: Colors.dark.tint,
+	},
+	// ◢ resize handle in the bottom-right corner of the crop box.
+	// Positioned so it overlaps the bracket to form a clear drag target.
+	resizeHandle: {
+		position: 'absolute',
+		bottom: -4,
+		right: -4,
+		width: 36,
+		height: 36,
+		alignItems: 'center',
+		justifyContent: 'center',
+	},
+	resizeHandleIcon: {
+		fontSize: 18,
+		color: Colors.dark.tint,
+		lineHeight: 20,
+	},
+	// Short instruction line between the image area and the action buttons
+	hint: {
+		fontSize: 11,
+		color: Colors.dark.icon,
+		textAlign: 'center',
+		paddingVertical: 8,
+		paddingHorizontal: 16,
 	},
 	bottomBar: {
-		paddingTop: 16,
+		paddingTop: 4,
 	},
 	actions: {
 		flexDirection: 'row',
@@ -775,6 +1018,20 @@ const styles = StyleSheet.create({
 		height: 56,
 		borderRadius: 28,
 		backgroundColor: Colors.dark.text,
+	},
+
+	// ── Camera loading / freeing screen ──────────────────────────────────────────
+	cameraLoadingContainer: {
+		flex: 1,
+		backgroundColor: '#000',
+		alignItems: 'center',
+		justifyContent: 'center',
+		gap: 16,
+	},
+	cameraLoadingText: {
+		fontSize: 15,
+		fontWeight: '500',
+		color: Colors.dark.icon,
 	},
 
 	// ── Zoom indicator ─────────────────────────────────────────────────────────
